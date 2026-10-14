@@ -318,7 +318,7 @@ for (const slot of GEAR_SLOTS) {
   const mats = { dark: new THREE.MeshToonMaterial(), seam: new THREE.MeshBasicMaterial() };
   const w = (level: number, rarity: Rarity): WeaponDef => ({
     id: 'w', name: 'x', archetype: 'rifle', rarity, element: 'none', level, damage: 1, fireRate: 1, auto: true,
-    magSize: 30, reloadTime: 1, pellets: 1, spread: 0, range: 1, critMultiplier: 1, elementChance: 0, perks: [], color: 0x888888,
+    magSize: 30, reloadTime: 1, pellets: 1, spread: 0, accuracy: 100, zoom: 1.45, adsSpread: 0.5, range: 1, critMultiplier: 1, elementChance: 0, perks: [], color: 0x888888,
   });
   const muzzle = new THREE.Vector3(0, 0.06, -0.63);
   const a = mkGun();

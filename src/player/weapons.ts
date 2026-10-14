@@ -2,12 +2,12 @@
  * Weapon slots, firing (hitscan pellets with spread), recoil, reload, swapping and perks.
  */
 import * as THREE from 'three';
-import { PLAYER } from '@/core/config';
+import { ACCURACY, ADS, PLAYER } from '@/core/config';
 import { ELEMENT_COLORS } from '@/core/types';
 import type { Enemy, GameContext, PlayerStats, WeaponArchetype, WeaponDef } from '@/core/types';
 import type { Controller } from './controller';
 import { SWAP_TIME, type Viewmodel } from './viewmodel';
-import { damp, gearExtras, getStats, runDamageMult } from './shared';
+import { adsOf, damp, gearExtras, getStats, lerp, runDamageMult, smooth } from './shared';
 import { createRng } from '@/core/rng';
 
 // ---- tunables ---------------------------------------------------------------
@@ -81,6 +81,12 @@ export class WeaponSystem {
   private time = 0;
   private lastShot = -10;
   private rampStacks = 0;
+  /** Bloom: extra spread multiplier from sustained fire (0 = first-shot accuracy). */
+  bloom = 0;
+  /** Aim down sights: held RMB and allowed (no reload/swap/melee/grenade). */
+  aiming = false;
+  /** 0..1 linear hip→ADS tween (eased via smooth() for presentation). */
+  private aimT = 0;
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly hitBuf: THREE.Intersection[] = [];
@@ -180,6 +186,10 @@ export class WeaponSystem {
     this.lockLeft = 0;
     this.triggerBuffer = 0;
     this.rampStacks = 0;
+    this.bloom = 0;
+    this.setAiming(false);
+    this.aimT = 0;
+    this.applyAim();
     this.host.controller.recoilPitch = 0;
     this.host.controller.recoilYaw = 0;
   }
@@ -187,6 +197,49 @@ export class WeaponSystem {
   /** Block firing for a moment (melee, grenade throw). */
   lock(seconds: number): void {
     this.lockLeft = Math.max(this.lockLeft, seconds);
+    this.setAiming(false); // melee / grenade drop the sights
+  }
+
+  // ---- aim down sights --------------------------------------------------------
+  /** Eased 0..1 hip→ADS blend. */
+  get aimBlend(): number {
+    return smooth(this.aimT);
+  }
+
+  /** Zoom of the active weapon while aiming, 1 otherwise. */
+  get zoom(): number {
+    const def = this.activeWeapon;
+    return this.aiming && def ? adsOf(def).zoom : 1;
+  }
+
+  private setAiming(on: boolean): void {
+    if (on === this.aiming) return;
+    this.aiming = on;
+    const def = this.activeWeapon;
+    this.ctx.events.emit('weapon:ads', { playerId: this.host.id, aiming: on, zoom: on && def ? adsOf(def).zoom : 1 });
+  }
+
+  /** Push the aim state to the controller/viewmodel (FOV, sensitivity, speed, gun pose). */
+  private applyAim(): void {
+    const ctl = this.host.controller;
+    const def = this.activeWeapon;
+    ctl.aiming = this.aiming;
+    ctl.aimBlend = this.aimBlend;
+    ctl.aimZoom = def ? adsOf(def).zoom : 1;
+  }
+
+  /**
+   * Hold RMB to aim. Runs before movement/camera each frame so FOV, sensitivity and speed react
+   * the same frame. Reload, swap, melee and grenade throws exit ADS (re-entered if still held).
+   */
+  updateAim(dt: number, canAct: boolean): void {
+    const input = this.ctx.input;
+    const blocked = this.reloadLeft > 0 || this.swapLeft > 0 || this.lockLeft > 0;
+    const want = canAct && !!this.activeWeapon && input.mouseIsDown(2);
+    this.setAiming(want && !blocked);
+    if (this.aiming) this.aimT = Math.min(1, this.aimT + dt / ADS.inTime);
+    else this.aimT = Math.max(0, this.aimT - dt / ADS.outTime);
+    this.applyAim();
   }
 
   switchTo(slot: number): void {
@@ -212,7 +265,9 @@ export class WeaponSystem {
 
   private onActiveChanged(animate: boolean): void {
     this.cancelReload();
+    this.setAiming(false);
     this.rampStacks = 0;
+    this.bloom = 0;
     this.triggerBuffer = 0;
     this.cooldown = 0;
     this.host.viewmodel.setWeapon(this.activeWeapon, animate);
@@ -225,6 +280,7 @@ export class WeaponSystem {
     if (!s || this.reloadLeft > 0 || s.ammo >= s.def.magSize || s.reserve <= 0) return false;
     const dur = Math.max(0.2, s.def.reloadTime * getStats(this.ctx).reloadMult);
     this.reloadLeft = dur;
+    this.setAiming(false);
     this.host.viewmodel.startReload(dur);
     this.ctx.events.emit('weapon:reload', { playerId: this.host.id, weapon: s.def, duration: dur });
     return true;
@@ -264,6 +320,11 @@ export class WeaponSystem {
       const k = damp(prof.recover, dt);
       ctl.recoilPitch -= ctl.recoilPitch * k;
       ctl.recoilYaw -= ctl.recoilYaw * k;
+    }
+    // bloom drains after a short pause in fire (full cap → 0 in ACCURACY.recoverTime)
+    if (this.bloom > 0 && this.time - this.lastShot > ACCURACY.recoverDelay) {
+      const cap = this.bloomProfile().cap;
+      this.bloom = Math.max(0, this.bloom - (cap / ACCURACY.recoverTime) * dt);
     }
 
     if (!canAct) {
@@ -339,6 +400,18 @@ export class WeaponSystem {
     return 0.7 + 0.45 * s; // rest 0.7, walk 1.15, sprint ~1.36
   }
 
+  private bloomProfile(): { perShot: number; cap: number } {
+    return ACCURACY.bloom[this.activeWeapon?.archetype ?? 'rifle'] ?? ACCURACY.bloom.rifle;
+  }
+
+  /** Effective cone half-angle of the next shot: base × movement × ADS × (1 + bloom). */
+  currentSpread(): number {
+    const def = this.activeWeapon;
+    if (!def) return 0;
+    const ads = lerp(1, adsOf(def).adsSpread, this.aimBlend);
+    return Math.max(0, def.spread) * this.spreadMult() * ads * (1 + this.bloom);
+  }
+
   private buildTargets(): void {
     this.targets.length = 0;
     this.rootMap.clear();
@@ -412,7 +485,7 @@ export class WeaponSystem {
     const muzzle = this.host.viewmodel.muzzleWorld(this.vMuzzle);
 
     const color = ELEMENT_COLORS[def.element] ?? ELEMENT_COLORS.none;
-    const spread = Math.max(0, def.spread) * this.spreadMult();
+    const spread = this.currentSpread();
     const pellets = Math.max(1, Math.round(def.pellets));
     const baseDmg = def.damage * stats.damageMult * runDamageMult(ctx);
     const ricochet = hasPerk(def, 'ricochet');
@@ -486,8 +559,10 @@ export class WeaponSystem {
 
     // recoil + presentation
     const prof = RECOIL[def.archetype] ?? RECOIL.rifle;
-    const scale = extra ? 0.5 : 1;
+    const scale = (extra ? 0.5 : 1) * lerp(1, ADS.recoilMult, this.aimBlend);
     const ctl = this.host.controller;
+    const bl = this.bloomProfile();
+    this.bloom = Math.min(bl.cap, this.bloom + bl.perShot * (extra ? 0.5 : 1));
     ctl.recoilPitch = Math.min(MAX_RECOIL_PITCH, ctl.recoilPitch + prof.pitch * scale * (0.85 + presRng() * 0.3));
     ctl.recoilYaw += (presRng() - 0.5) * 2 * prof.yaw * scale;
     ctl.sprintBlock = 0.35;

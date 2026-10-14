@@ -3,8 +3,9 @@
  * gravity, capsule collision, head bob, landing dip, sprint FOV and death camera.
  */
 import * as THREE from 'three';
-import { CAMERA, PLAYER } from '@/core/config';
+import { ADS, CAMERA, PLAYER } from '@/core/config';
 import type { GameContext } from '@/core/types';
+import { getSettings } from '@/ui/settings';
 import { clamp, damp, lerp, smooth } from './shared';
 
 // ---- tunables ---------------------------------------------------------------
@@ -26,9 +27,13 @@ const LAND_DAMPING = 22;
 const DEATH_EYE_HEIGHT = 0.45;
 const DEATH_ROLL = 0.5;
 const DEATH_TIME = 0.9;
-/** Gear set hook 'voidrunner_dash': a sprint-jump becomes a blink dash. */
-export const DASH_SPEED = 18;
-export const DASH_COOLDOWN = 4;
+/**
+ * Gear set hook 'voidrunner_dash': a sprint-jump becomes a blink dash. Tuned (docs/INTEGRATION_NOTES.md):
+ * 15 m/s is ~1.4× sprint (11 m/s), enough to clear a slam ring or a laser lane, not a map-crossing
+ * blink; the 5 s cooldown keeps it to about one dash per sub-wave engagement.
+ */
+export const DASH_SPEED = 15;
+export const DASH_COOLDOWN = 5;
 
 export class Controller {
   /** Feet position (shared with PlayerState.position). */
@@ -55,6 +60,14 @@ export class Controller {
   lookDY = 0;
   /** Seconds remaining during which sprint is suppressed (set while firing). */
   sprintBlock = 0;
+  /** Aim down sights (set every frame by the weapon system before look/move/camera). */
+  aiming = false;
+  /** Eased 0..1 hip→ADS blend; the camera FOV and look sensitivity follow it. */
+  aimBlend = 0;
+  /** Active weapon's ADS FOV divisor. */
+  aimZoom = 1;
+  /** Smoothed hip FOV (base + sprint bump); ADS divides it. */
+  private hipFov: number = CAMERA.fov;
 
   private coyote = 0;
   private jumpBuffer = 0;
@@ -92,10 +105,12 @@ export class Controller {
       this.lookDY = 0;
       return;
     }
-    this.yaw -= dx * MOUSE_SENSITIVITY;
+    // Base rad/pixel × the player's sensitivity setting (src/ui/settings.ts, 0.2..3, default 1).
+    const sens = (MOUSE_SENSITIVITY * getSettings().mouseSensitivity) / this.currentZoom(); // ADS: slower look
+    this.yaw -= dx * sens;
     if (this.yaw > Math.PI) this.yaw -= Math.PI * 2;
     else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
-    this.pitch = clamp(this.pitch - dy * MOUSE_SENSITIVITY, -PITCH_LIMIT, PITCH_LIMIT);
+    this.pitch = clamp(this.pitch - dy * sens, -PITCH_LIMIT, PITCH_LIMIT);
     this.lookDX = dx;
     this.lookDY = dy;
   }
@@ -122,8 +137,8 @@ export class Controller {
     const hasInput = len > 0.01;
 
     this.sprintBlock = Math.max(0, this.sprintBlock - dt);
-    this.sprinting = active && input.isDown('ShiftLeft') && fwd > 0 && this.sprintBlock <= 0;
-    const speed = (this.sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * speedMult;
+    this.sprinting = active && !this.aiming && input.isDown('ShiftLeft') && fwd > 0 && this.sprintBlock <= 0;
+    const speed = (this.sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * speedMult * (this.aiming ? ADS.moveMult : 1);
 
     // forward = (-sin, 0, -cos), right = (cos, 0, -sin)
     const s = Math.sin(this.yaw);
@@ -221,6 +236,11 @@ export class Controller {
     }
   }
 
+  /** Effective zoom right now (1 at the hip, aimZoom fully aimed). */
+  currentZoom(): number {
+    return 1 + (Math.max(1, this.aimZoom) - 1) * this.aimBlend;
+  }
+
   /** Sets the camera absolutely (fx adds shake afterwards). */
   updateCamera(dt: number, alive: boolean): void {
     const cam = this.ctx.camera;
@@ -265,9 +285,10 @@ export class Controller {
       'YXZ',
     );
 
-    // sprint FOV
-    const fovTarget = CAMERA.fov + (alive && this.sprinting && hs > PLAYER.walkSpeed * 0.9 ? SPRINT_FOV_BONUS : 0);
-    const nf = cam.fov + (fovTarget - cam.fov) * damp(8, dt);
+    // sprint FOV (hip), divided by the ADS zoom (the aim tween itself is the 0.12 s / 0.1 s ramp)
+    const fovTarget = CAMERA.fov + (alive && !this.aiming && this.sprinting && hs > PLAYER.walkSpeed * 0.9 ? SPRINT_FOV_BONUS : 0);
+    this.hipFov += (fovTarget - this.hipFov) * damp(8, dt);
+    const nf = this.hipFov / this.currentZoom();
     if (Math.abs(nf - cam.fov) > 1e-3) {
       cam.fov = nf;
       cam.updateProjectionMatrix();

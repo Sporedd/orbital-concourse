@@ -5,13 +5,13 @@
  * WeaponSystem (slots, hitscan, recoil, perks), GrenadeSystem and melee into one PlayerState.
  */
 import * as THREE from 'three';
-import { PLAYER } from '@/core/config';
+import { PLAYER, accuracyFromSpread } from '@/core/config';
 import type { DamageOpts, GameContext, PlayerRegistry, PlayerState, PlayerStats, WeaponArchetype, WeaponDef } from '@/core/types';
 import type { Loadout } from '@/gear/types';
 import { Controller } from './controller';
 import { GrenadeSystem, GRENADE_SPEED, GRENADE_UP_SPEED } from './grenades';
 import { performMelee } from './melee';
-import { DEFAULT_STATS, clamp, gearExtras, getStats, maxGrenades } from './shared';
+import { DEFAULT_STATS, adsOf, clamp, gearExtras, getStats, maxGrenades } from './shared';
 import { Viewmodel } from './viewmodel';
 import { WeaponSystem } from './weapons';
 
@@ -23,10 +23,22 @@ const START_GRENADES = 2;
 const GRENADE_COOLDOWN = 0.6;
 const DAMAGE_FLASH_HEALTH = 0xff2a2a;
 const DAMAGE_FLASH_SHIELD = 0x3fa0ff;
-/** Gear set hook 'bulwark_last_stand': damage reduction after the shield breaks. */
-const LAST_STAND_TIME = 2;
-const LAST_STAND_COOLDOWN = 10;
-const LAST_STAND_REDUCTION = 0.5;
+/**
+ * Gear set hook 'bulwark_last_stand': damage reduction after the shield breaks. Tuned
+ * (docs/INTEGRATION_NOTES.md): 40 % for 2.5 s covers the burst that broke the shield plus one
+ * retreat, and a 12 s cooldown means it is not up for every shield break in a brawl.
+ */
+export const LAST_STAND_TIME = 2.5;
+export const LAST_STAND_COOLDOWN = 12;
+export const LAST_STAND_REDUCTION = 0.4;
+/**
+ * Gear set hook 'pitfighter_bloodlust': a melee kill restores a slice of the shield and refunds
+ * a grenade on a cooldown. Tuned (docs/INTEGRATION_NOTES.md): a full refill per kill made melee
+ * chains unkillable; 35 % of max shield per finisher rewards the risk without removing it, and
+ * the grenade refund every 8 s at most keeps grenades a resource.
+ */
+export const BLOODLUST_SHIELD_FRACTION = 0.35;
+export const BLOODLUST_GRENADE_COOLDOWN = 8;
 const EMPTY_LOADOUT: Readonly<Loadout> = Object.freeze({});
 
 export interface CreatePlayerOptions {
@@ -51,7 +63,13 @@ function validWeapon(raw: unknown): WeaponDef | null {
   if (typeof w.name !== 'string' || !ARCHETYPES.includes(w.archetype as WeaponArchetype)) return null;
   if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n))) return null;
   if (!(w.damage! > 0) || !(w.fireRate! > 0) || !(w.magSize! >= 1)) return null;
-  return { ...(w as WeaponDef), perks: Array.isArray(w.perks) ? w.perks : [] };
+  const def = { ...(w as WeaponDef), perks: Array.isArray(w.perks) ? w.perks : [] };
+  // weapons saved before accuracy/ADS existed: derive them (spread is the truth for accuracy)
+  if (typeof def.accuracy !== 'number' || !Number.isFinite(def.accuracy)) def.accuracy = accuracyFromSpread(def.spread);
+  const ads = adsOf(def);
+  def.zoom = ads.zoom;
+  def.adsSpread = ads.adsSpread;
+  return def;
 }
 
 export function loadWeapons(key: string): (WeaponDef | null)[] {
@@ -132,6 +150,7 @@ export function createPlayer(ctx: GameContext, opts: CreatePlayerOptions): Playe
   let grenadeCooldown = 0;
   let lastStandT = 0; // bulwark_last_stand window
   let lastStandCd = 0;
+  let bloodlustCd = 0; // pitfighter_bloodlust grenade refund cooldown
 
   /** Sponsor contract of the current run (system I); undefined without standing. */
   const run = () => (ctx as Partial<GameContext>).standing?.sponsors.active;
@@ -202,10 +221,13 @@ export function createPlayer(ctx: GameContext, opts: CreatePlayerOptions): Playe
     viewmodel.bash();
     const hit = performMelee(ctx, controller.position, controller.yaw, opts.id);
     ctx.fx.shake(hit ? 0.25 : 0.06);
-    // Pitfighter 3/3: melee kills refill the shield and refund a grenade.
+    // Pitfighter 3/3: melee kills restore part of the shield and refund a grenade (on cooldown).
     if (hit && !hit.alive && hasHook('pitfighter_bloodlust')) {
-      p.shield = p.maxShield;
-      p.addGrenades(1);
+      p.shield = Math.min(p.maxShield, p.shield + p.maxShield * BLOODLUST_SHIELD_FRACTION);
+      if (bloodlustCd <= 0 && p.grenades < grenadeCap()) {
+        p.addGrenades(1);
+        bloodlustCd = BLOODLUST_GRENADE_COOLDOWN;
+      }
     }
     ctx.events.emit('player:melee', { playerId: opts.id, hit: !!hit });
   }
@@ -271,6 +293,15 @@ export function createPlayer(ctx: GameContext, opts: CreatePlayerOptions): Playe
     },
     get onGround() {
       return controller.onGround;
+    },
+    get aiming() {
+      return weapons.aiming;
+    },
+    get zoom() {
+      return weapons.zoom;
+    },
+    get spread() {
+      return weapons.currentSpread();
     },
     grenades: START_GRENADES,
     get ammo() {
@@ -358,6 +389,7 @@ export function createPlayer(ctx: GameContext, opts: CreatePlayerOptions): Playe
       grenadeCooldown = 0;
       lastStandT = 0;
       lastStandCd = 0;
+      bloodlustCd = 0;
       p.grenades = run()?.grenadeless ? 0 : START_GRENADES;
       const start = ctx.world.playerStart;
       controller.resetTo(start, yawTowardsCenter(start));
@@ -389,7 +421,9 @@ export function createPlayer(ctx: GameContext, opts: CreatePlayerOptions): Playe
 
       if (lastStandT > 0) lastStandT -= dt;
       if (lastStandCd > 0) lastStandCd -= dt;
+      if (bloodlustCd > 0) bloodlustCd -= dt;
 
+      weapons.updateAim(dt, alive); // ADS first: look sensitivity, speed and FOV read it
       controller.look(alive);
       controller.dashEnabled = hasHook('voidrunner_dash');
       controller.move(dt, alive, stats.moveSpeedMult);

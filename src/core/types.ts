@@ -61,7 +61,13 @@ export interface WeaponDef {
   magSize: number;
   reloadTime: number; // seconds
   pellets: number; // 1 for most, 6-10 for shotguns
-  spread: number; // radians, cone half-angle
+  spread: number; // radians, cone half-angle (base/first-shot; derived from accuracy)
+  /** 0..100 shown on the card; spread = config spreadFromAccuracy(accuracy). */
+  accuracy: number;
+  /** Aim-down-sights FOV divisor (1 = no zoom; snipers ~3). */
+  zoom: number;
+  /** Spread multiplier while aiming down sights. */
+  adsSpread: number;
   range: number; // metres
   critMultiplier: number;
   elementChance: number; // 0..1 chance per hit to apply the status (0 when element === 'none')
@@ -121,6 +127,12 @@ export interface PlayerState {
   readonly loadout: Readonly<Loadout>;
   /** True while standing on ground (hype "airborne" kills, set hooks). */
   readonly onGround: boolean;
+  /** Aiming down sights (local player; remote players leave it undefined). */
+  readonly aiming?: boolean;
+  /** Current ADS zoom of the active weapon while aiming (1 when not aiming). */
+  readonly zoom?: number;
+  /** Current effective spread (radians) incl. movement, ADS and bloom, for the crosshair. */
+  readonly spread?: number;
   grenades: number;
   ammo: number; // rounds in the current magazine
   reserve: number; // reserve rounds for the active weapon

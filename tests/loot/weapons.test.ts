@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createRng } from '@/core/rng';
+import { ADS, spreadFromAccuracy } from '@/core/config';
 import { RARITY_ORDER, type Rarity, type WeaponArchetype, type WeaponDef } from '@/core/types';
 import {
   ARCHETYPES, ARCHETYPE_LIST, PERKS, RARITY_BUDGET, generateWeapon, rarityWeights, rollRarity, starterWeapon,
   tierDamageMult, weaponAccuracy, weaponDps,
 } from '@/loot/weapons';
 
+const accClamp = (v: number) => Math.min(99, Math.max(5, v));
 const PERK_IDS = new Set(PERKS.map((p) => p.id));
 const PERK_COUNT: Record<Rarity, [number, number]> = {
   common: [0, 0], uncommon: [0, 0], rare: [1, 1], epic: [1, 2], legendary: [2, 2],
@@ -54,14 +56,31 @@ describe('generateWeapon invariants (10 000 weapons, tiers 1..10)', () => {
         ['fireRate', w.fireRate, b.fireRate * 0.85 - EPS, b.fireRate * 1.15 + EPS],
         ['magSize', w.magSize, Math.max(2, Math.round(b.magSize * 0.85)), Math.round(b.magSize * 1.15)],
         ['reloadTime', w.reloadTime, b.reloadTime * 0.85 - EPS, b.reloadTime * 1.15 + EPS],
-        ['spread', w.spread, b.spread * 0.85 - 0.0006, b.spread * 1.15 + 0.0006],
+        ['accuracy', w.accuracy, accClamp(b.accuracy - 5 + 2.5 * RARITY_ORDER.indexOf(w.rarity)) - 0.5, accClamp(b.accuracy + 5 + 2.5 * RARITY_ORDER.indexOf(w.rarity)) + 0.5],
       ];
+      if (w.spread !== spreadFromAccuracy(w.accuracy)) bad.push(`${w.archetype} spread ${w.spread} not derived from accuracy ${w.accuracy}`);
+      if (weaponAccuracy(w) !== w.accuracy) bad.push(`${w.archetype} card ACC ${weaponAccuracy(w)} != accuracy ${w.accuracy}`);
+      const z = ADS.archetype[w.archetype];
+      const legSniper = w.archetype === 'sniper' && w.rarity === 'legendary';
+      const zoomOk = legSniper ? w.zoom === 3.5
+        : w.zoom === z.zoom || (RARITY_ORDER.indexOf(w.rarity) >= 2 && Math.abs(w.zoom - z.zoom * 1.1) < 0.006);
+      if (!zoomOk) bad.push(`${w.archetype}/${w.rarity} zoom ${w.zoom}`);
+      if (w.adsSpread !== z.adsSpread) bad.push(`${w.archetype} adsSpread ${w.adsSpread}`);
       for (const [name, val, lo, hi] of checks) {
         if (!(val >= lo && val <= hi)) bad.push(`${w.archetype}/${w.rarity}/t${tier} ${name}=${val} not in [${lo}, ${hi}]`);
       }
       if (!Number.isInteger(w.magSize)) bad.push(`magSize not integer: ${w.magSize}`);
     }
     expect(bad.slice(0, 10)).toEqual([]);
+  });
+
+  it('higher rarities skew accuracy up', () => {
+    const avg = (r: Rarity) => {
+      const of = ALL.filter((x) => x.w.rarity === r && x.w.archetype !== 'sniper');
+      return of.reduce((s, x) => s + x.w.accuracy - ARCHETYPES[x.w.archetype].accuracy, 0) / of.length;
+    };
+    expect(avg('legendary')).toBeGreaterThan(avg('rare'));
+    expect(avg('rare')).toBeGreaterThan(avg('common'));
   });
 
   it('every archetype and every rarity actually occurs', () => {

@@ -1,7 +1,8 @@
 /**
  * Small helpers shared by the player modules.
  */
-import type { GameContext, PlayerStats } from '@/core/types';
+import { ADS } from '@/core/config';
+import type { GameContext, PlayerStats, WeaponDef } from '@/core/types';
 
 export const DEFAULT_STATS: PlayerStats = {
   damageMult: 1,
@@ -60,3 +61,14 @@ export const smooth = (t: number) => {
   return x * x * (3 - 2 * x);
 };
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+/**
+ * ADS optic of a weapon: its own zoom/adsSpread, falling back to the archetype table for defs
+ * saved or sent before ADS existed (and clamped against bad data).
+ */
+export function adsOf(def: WeaponDef): { zoom: number; adsSpread: number } {
+  const base = ADS.archetype[def.archetype] ?? ADS.archetype.rifle;
+  const zoom = typeof def.zoom === 'number' && Number.isFinite(def.zoom) ? clamp(def.zoom, 1, 6) : base.zoom;
+  const adsSpread = typeof def.adsSpread === 'number' && Number.isFinite(def.adsSpread) ? clamp(def.adsSpread, 0.05, 1) : base.adsSpread;
+  return { zoom, adsSpread };
+}

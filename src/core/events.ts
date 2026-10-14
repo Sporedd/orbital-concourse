@@ -16,6 +16,8 @@ export interface GameEvents extends StandingEvents {
   'weapon:equipped': { playerId: string; weapon: WeaponDef; slot: number };
   'weapon:ammo': { playerId: string; ammo: number; reserve: number; magSize: number };
   'weapon:reload': { playerId: string; weapon: WeaponDef; duration: number };
+  /** Aim-down-sights toggled (zoom = the weapon's FOV divisor while aiming, 1 when released). */
+  'weapon:ads': { playerId: string; aiming: boolean; zoom: number };
   'player:damaged': { playerId: string; amount: number; health: number; shield: number; element: Element; from?: THREE.Vector3 };
   'player:shield': { playerId: string; shield: number; maxShield: number; broken: boolean };
   'player:healed': { playerId: string; amount: number; health: number };

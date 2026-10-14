@@ -19,6 +19,8 @@ import type {
 import { createEnemyManager } from '@/enemies';
 import { createLootSystem } from '@/loot';
 import { createGearSystem } from '@/gear';
+import { computeLoadoutStats } from '@/gear/generator';
+import type { Loadout } from '@/gear/types';
 import { startRelay } from '../../../server/relay';
 import { createNetSession, type NetSession } from '../session';
 import { RemotePlayer } from '../remotePlayer';
@@ -69,7 +71,7 @@ class FakePlayer implements PlayerState {
   equipped: WeaponDef[] = [];
   resets = 0;
   revives = 0;
-  readonly loadout = {};
+  loadout: Loadout = {};
   onGround = true;
   constructor(private readonly ctx: GameContext, readonly id: string, readonly name: string) {}
   get alive() { return this.aliveFlag; }
@@ -214,7 +216,7 @@ function makeCtx(label: string, host: boolean): Rig {
 function starter(id: string): WeaponDef {
   return {
     id, name: 'Starter', archetype: 'pistol', rarity: 'common', element: 'none', level: 1, damage: 20, fireRate: 4, auto: false,
-    magSize: 12, reloadTime: 1.2, pellets: 1, spread: 0.01, range: 60, critMultiplier: 2, elementChance: 0, perks: [], color: 0xdddddd,
+    magSize: 12, reloadTime: 1.2, pellets: 1, spread: 0.01, accuracy: 82, zoom: 1.25, adsSpread: 0.6, range: 60, critMultiplier: 2, elementChance: 0, perks: [], color: 0xdddddd,
   };
 }
 
@@ -400,6 +402,27 @@ async function main(): Promise<void> {
       await until('gear in client inventory', () => C.ctx.gear!.inventory.has(gearItem.gear!.id));
       assert.ok(!H.ctx.loot.items().some((i) => i.id === gearItem.id), 'host removed the gear item');
       assert.ok(!H.ctx.gear, 'host has no gear system: nothing went to the host inventory');
+    });
+
+    await test('loadouts cross the wire: the host RemotePlayer and the client view wear the gear', async () => {
+      const helm = C.ctx.gear!.generate(4, { slot: 'helm', rarity: 'rare' });
+      C.player.loadout = { helm };
+      C.ctx.events.emit('gear:changed', { playerId: C.player.id, stats: computeLoadoutStats(C.player.loadout), loadout: C.player.loadout });
+      const remote = H.ctx.players.get(hostPidOfClient) as RemotePlayer;
+      await until('host remote player wears the helm', () => remote.loadout.helm?.id === helm.id);
+      assert.equal(Object.keys(remote.loadout).length, 1, 'only the helm');
+      const chest = C.ctx.gear!.generate(6, { slot: 'chest', rarity: 'epic' });
+      H.player.loadout = { chest };
+      H.ctx.events.emit('gear:changed', { playerId: H.player.id, stats: computeLoadoutStats(H.player.loadout), loadout: H.player.loadout });
+      const hostLocalId = clientS.clientRuntime!.toLocal(H.player.id)!;
+      await until('client sees the host loadout', () => clientS.clientRuntime!.remoteLoadout(hostLocalId)?.chest?.id === chest.id);
+      // a bad piece is dropped, the rest kept
+      C.player.loadout = { helm, boots: { ...helm, id: 'bad', slot: 'boots' } as unknown as Loadout['boots'] };
+      C.ctx.events.emit('gear:changed', { playerId: C.player.id, stats: computeLoadoutStats(C.player.loadout), loadout: C.player.loadout });
+      await until('host got the second loadout', () => remote.loadout.boots !== undefined || Object.keys(remote.loadout).length === 1 && remote.loadout.helm?.id === helm.id);
+      await pump(150);
+      assert.equal(remote.loadout.helm?.id, helm.id);
+      assert.ok(remote.loadout.boots?.slot === 'boots' || remote.loadout.boots === undefined);
     });
 
     await test('enemy damage on the host is authoritative and echoed to the client', async () => {

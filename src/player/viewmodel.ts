@@ -7,6 +7,7 @@
  */
 import * as THREE from 'three';
 import { createRng } from '@/core/rng';
+import { ADS } from '@/core/config';
 import { ELEMENT_COLORS, RARITY_COLORS } from '@/core/types';
 import { PALETTE, glowLum } from '@/rendering/style';
 import type { GameContext, WeaponArchetype, WeaponDef } from '@/core/types';
@@ -31,6 +32,17 @@ const FLASH_TIME = 0.055;
 const FLASH_LIGHT_INTENSITY = 10;
 /** The flash light sits ahead of the muzzle (camera-local metres): it lights the world, not the gun. */
 const FLASH_LIGHT_AHEAD = 1.1;
+/**
+ * ADS "sights" pose: the pivot offset (pivot units) that puts the gun's sight line on the screen
+ * centre. x cancels VM_BASE.x, y lifts the sight (model y = SIGHT_Y) to the eye line.
+ */
+const SIGHT_Y: Record<WeaponArchetype, number> = { pistol: 0.108, smg: 0.118, shotgun: 0.1, rifle: 0.166, sniper: 0.145 };
+const ADS_X = -VM_BASE.x / VM_SCALE;
+const ADS_Y = -VM_BASE.y / VM_SCALE;
+/** Pivot z offset while aimed: pushed a little forward so the zoomed FOV doesn't blow the gun up. */
+const ADS_PULL = -0.12;
+/** Sway/bob that remains while fully aimed. */
+const ADS_STEADY = 0.25;
 
 // Brutalist Arena gun (docs/ART_DIRECTION.md §8): STEEL receiver, STEEL_DARK polymer, a rarity
 // (or element) seam as the only colour, matte character surfaces.
@@ -182,6 +194,8 @@ export class Viewmodel {
   private throwT = -1;
   private dead = false;
   private deadT = 0;
+  /** Lowered behind a scope (ADS with zoom ≥ ADS.scopeZoom): tracers start at the eye instead. */
+  private scopedDown = false;
 
   // first-person gloves (gear): replaces the plain glove box + cuff while equipped
   private defaultHand: THREE.Object3D[] = [];
@@ -379,7 +393,7 @@ export class Viewmodel {
 
   /** World position of the muzzle (falls back to just in front of the camera). */
   muzzleWorld(out: THREE.Vector3): THREE.Vector3 {
-    if (this.hasModel && this.pivot.visible) return this.flashGroup.getWorldPosition(out);
+    if (this.hasModel && this.pivot.visible && !this.scopedDown) return this.flashGroup.getWorldPosition(out);
     const cam = this.ctx.camera;
     cam.getWorldPosition(out);
     const dir = cam.getWorldDirection(new THREE.Vector3());
@@ -405,14 +419,19 @@ export class Viewmodel {
       if (this.swapT >= SWAP_RAISE) this.swapPhase = 'none';
     }
 
+    // aim down sights: blend toward the centred sights pose (scoped guns lower out of view)
+    const aim = this.current ? c.aimBlend : 0;
+    const scoped = aim > 0 && c.aimZoom >= ADS.scopeZoom;
+    const steady = 1 - aim * (1 - ADS_STEADY);
+
     // sway from mouse movement
-    const tx = clamp(-c.lookDX * 0.0006, -0.05, 0.05);
-    const ty = clamp(c.lookDY * 0.0006, -0.05, 0.05);
+    const tx = clamp(-c.lookDX * 0.0006, -0.05, 0.05) * steady;
+    const ty = clamp(c.lookDY * 0.0006, -0.05, 0.05) * steady;
     this.swayX += (tx - this.swayX) * damp(9, dt);
     this.swayY += (ty - this.swayY) * damp(9, dt);
 
     // bob
-    const amt = c.moveAmount * (c.sprinting ? 1.4 : 1);
+    const amt = c.moveAmount * (c.sprinting ? 1.4 : 1) * steady;
     const bx = Math.cos(c.bobPhase) * 0.02 * amt;
     const by = -Math.abs(Math.sin(c.bobPhase)) * 0.022 * amt;
 
@@ -461,12 +480,16 @@ export class Viewmodel {
     else this.deadT = Math.max(0, this.deadT - dt * 4);
     const deadLower = smooth(this.deadT);
 
-    const lower = Math.max(swapLower, throwLower, deadLower);
+    const lower = Math.max(swapLower, throwLower, deadLower, scoped ? aim : 0);
+    // sights pose (not for scopes: those drop away and the HUD draws the scope)
+    const sights = scoped ? 0 : aim;
+    this.scopedDown = scoped && aim > 0.5;
+    const sightY = SIGHT_Y[this.current?.archetype ?? 'rifle'] ?? SIGHT_Y.rifle;
 
     this.pivot.position.set(
-      this.swayX + bx - bash * 0.1 - this.sprintT * 0.03,
-      this.swayY + by - lower * 0.45 - drop * 0.12 - this.sprintT * 0.05 + this.airT * 0.015 + jolt * 0.025,
-      this.kickZ - bash * 0.32 + drop * 0.05,
+      this.swayX + bx - bash * 0.1 - this.sprintT * 0.03 + sights * ADS_X,
+      this.swayY + by - lower * 0.45 - drop * 0.12 - this.sprintT * 0.05 + this.airT * 0.015 * steady + jolt * 0.025 + sights * (ADS_Y - sightY),
+      this.kickZ * steady - bash * 0.32 + drop * 0.05 + sights * ADS_PULL,
     );
     this.pivot.rotation.set(
       this.kickRot - lower * 0.9 - drop * 0.35 - this.sprintT * 0.25 + jolt * 0.12 + this.airT * 0.04,

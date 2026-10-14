@@ -5,7 +5,7 @@
  * level-up ribbon, muted indicator and a mount point for the standing widgets.
  */
 import * as THREE from 'three';
-import { INTERMISSION_SECONDS, PLAYER, SUB_WAVES } from '@/core/config';
+import { ADS, INTERMISSION_SECONDS, PLAYER, SUB_WAVES } from '@/core/config';
 import type { BossKind, Element, Enemy, GameContext, LootItemState } from '@/core/types';
 import { css, leagueStyle, type LeagueStyle } from '@/rendering/style';
 import { HYPE_TIER_LABEL, onStanding } from '@/standing/types';
@@ -39,8 +39,36 @@ function gauge(parent: HTMLElement, cls: string): { el: HTMLElement; fill: HTMLE
 /** Snap a fraction to whole segments (segments empty one by one). */
 const seg = (f: number, n: number) => Math.ceil(Math.max(0, Math.min(1, f)) * n - 1e-6) / n;
 
+/**
+ * `current / max` for the vitals rows. Current rounds up (0.3 hp still reads 1), max rounds to
+ * nearest, and current never reads above max: 118.4 / 118.4 shows "118 / 118", not "119 / 118".
+ */
+export function vitalText(current: number, max: number): string {
+  const m = Math.round(max);
+  return `${Math.min(Math.max(0, Math.ceil(current)), m)} / ${m}`;
+}
+
 export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidgets {
   const hud = h('div', 'sb-hud', root);
+
+  // ---- aim down sights: vignette + scope (under everything else) ---------------------------
+  const adsVig = h('div', 'sb-adsvig', hud);
+  const scope = h('div', 'sb-scope', hud);
+  h('div', 'ring', scope);
+  h('div', 'mask', scope);
+  h('i', 'hx', scope);
+  h('i', 'vx', scope);
+  h('i', 'hx thick l', scope);
+  h('i', 'hx thick r', scope);
+  h('i', 'vx thick', scope);
+  for (let i = 1; i <= 4; i++) h('i', 'tick', scope).style.top = `calc(50% + var(--r) * ${(i * 0.06).toFixed(2)} - 1px)`;
+  h('i', 'dot', scope);
+  const scopeRead = h('div', 'read', scope);
+  const scopeIlv = h('span', 'sb-lbl', scopeRead);
+  const scopeRange = h('span', 'sb-val', scopeRead);
+  let adsAiming = false;
+  let adsZoom = 1;
+  const scoped = () => adsAiming && adsZoom >= ADS.scopeZoom;
 
   // ---- low health edge + damage direction ---------------------------------------------
   const lowEdge = h('div', 'sb-lowedge', hud);
@@ -215,6 +243,16 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
     kick = Math.min(kick + (e.weapon.archetype === 'sniper' || e.weapon.archetype === 'shotgun' ? 14 : 6), 22);
   });
 
+  ctx.events.on('weapon:ads', (e) => {
+    if (!isLocal(e.playerId)) return;
+    adsAiming = e.aiming;
+    adsZoom = e.zoom;
+    adsVig.classList.toggle('on', adsAiming);
+    scope.classList.toggle('on', scoped());
+    ch.classList.toggle('ads', adsAiming && !scoped());
+    ch.classList.toggle('scoped', scoped());
+  });
+
   ctx.events.on('weapon:reload', (e) => {
     if (!isLocal(e.playerId)) return;
     reload = { t: 0, dur: Math.max(0.05, e.duration), weaponId: e.weapon.id };
@@ -364,12 +402,17 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
     fresh(msgQueue);
     for (const d of dirs) d.t = 0;
     killTimes.length = 0;
+    adsAiming = false;
+    adsVig.classList.remove('on');
+    scope.classList.remove('on');
+    ch.classList.remove('ads', 'scoped');
   }
 
   // ======================================================================
   // per-frame
   // ======================================================================
   const camFwd = new THREE.Vector3();
+  const scopeDir = new THREE.Vector3();
   let accentShown = -1;
 
   function update(dt: number): void {
@@ -386,11 +429,17 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
     const p = ctx.player;
     const w = p?.activeWeapon ?? null;
 
-    // Crosshair (spread widens the gap)
+    // Crosshair: the gap follows the live effective spread (movement × ADS × bloom), tighter aimed
     kick = Math.max(0, kick - dt * 45);
-    const speed = p ? Math.hypot(p.velocity.x, p.velocity.z) : 0;
-    const base = w ? 8 + Math.min(w.spread * 300, 32) : 8;
-    const target = base + Math.min(speed, PLAYER.sprintSpeed) * 0.9 + kick;
+    let target: number;
+    if (p && typeof p.spread === 'number') {
+      target = 4 + Math.min(p.spread * 420, 48) + kick * 0.5;
+      if (adsAiming) target *= 0.6;
+    } else {
+      const speed = p ? Math.hypot(p.velocity.x, p.velocity.z) : 0;
+      const base = w ? 8 + Math.min(w.spread * 300, 32) : 8;
+      target = base + Math.min(speed, PLAYER.sprintSpeed) * 0.9 + kick;
+    }
     gap += (target - gap) * Math.min(1, dt * 18);
     const g = Math.round(gap / 2);
     chT.style.transform = `translateY(${-(g + 12)}px)`;
@@ -399,6 +448,13 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
     chR.style.transform = `translateX(${g}px)`;
     hitT = Math.max(0, hitT - dt);
     hit.style.opacity = hitT > 0 ? '1' : '0';
+    if (scoped() && w && p) {
+      // scope readout: item level + distance to the surface under the reticle
+      setText(scopeIlv, `ILV ${pad2(w.level)} · ×${adsZoom.toFixed(1)}`);
+      ctx.camera.getWorldDirection(scopeDir);
+      const rh = ctx.world.raycast(ctx.camera.position, scopeDir, w.range);
+      setText(scopeRange, rh ? `RANGE ${rh.distance.toFixed(0).padStart(3, '0')} M` : `RANGE ${w.range}+ M`);
+    }
     if (killFrame > 0) {
       killFrame--;
       if (killFrame === 0) hit.classList.remove('kill');
@@ -412,14 +468,14 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
       const hf = p.health / mh;
       setScaleX(shieldG.fill, seg(sf, 20));
       setScaleX(shieldG.lag, seg(sf, 20));
-      setText(shieldVal, `${Math.ceil(p.shield)} / ${Math.round(ms)}`);
+      setText(shieldVal, vitalText(p.shield, ms));
       if (sf < shieldWas - 0.5 && sf <= 0.01) shieldFlash = 0.18;
       shieldWas = sf;
       shieldFlash = Math.max(0, shieldFlash - dt);
       shieldG.el.classList.toggle('flash', shieldFlash > 0);
       setScaleX(healthG.fill, seg(hf, 10));
       setScaleX(healthG.lag, seg(hf, 10));
-      setText(healthVal, `${Math.ceil(p.health)} / ${Math.round(mh)}`);
+      setText(healthVal, vitalText(p.health, mh));
       vitals.classList.toggle('low', hf < 0.25 && p.alive);
       lowEdge.classList.toggle('on', hf < 0.25 && p.alive);
       for (let i = 0; i < grenIcons.length; i++) grenIcons[i].classList.toggle('off', i >= p.grenades);

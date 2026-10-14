@@ -75,6 +75,28 @@ const CSS = /* css */ `
 .sb-ch i { position: absolute; background: var(--bone); box-shadow: 0 0 0 1px rgba(20,21,22,.5); }
 .sb-ch .t, .sb-ch .b { width: 2px; height: 12px; left: -1px; }
 .sb-ch .l, .sb-ch .r { width: 12px; height: 2px; top: -1px; }
+.sb-ch { transition: opacity .08s linear; }
+.sb-ch.ads i { background: var(--bone); box-shadow: 0 0 0 1px rgba(20,21,22,.7); }
+.sb-ch.scoped { opacity: 0; }
+
+/* aim down sights: edge vignette while aiming; stencil scope (circle + hairlines + readout) at zoom >= 2 */
+.sb-adsvig { position: absolute; inset: 0; opacity: 0; transition: opacity .12s linear; background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(8,9,10,.55) 120%); }
+.sb-adsvig.on { opacity: 1; }
+.sb-scope { position: absolute; inset: 0; opacity: 0; transition: opacity .08s linear; --r: min(42vh, 42vw); }
+.sb-scope.on { opacity: 1; }
+.sb-scope .mask { position: absolute; inset: 0; background: radial-gradient(circle at center, rgba(0,0,0,0) calc(var(--r) - 1px), var(--bone) var(--r), var(--bone) calc(var(--r) + 2px), #0B0C0D calc(var(--r) + 3px)); }
+.sb-scope .ring { position: absolute; left: 50%; top: 50%; width: calc(var(--r) * 2); height: calc(var(--r) * 2); transform: translate(-50%, -50%); border-radius: 50%; box-shadow: inset 0 0 calc(var(--r) * .35) rgba(8,9,10,.7); }
+.sb-scope .hx, .sb-scope .vx { position: absolute; background: #0B0C0D; }
+.sb-scope .hx { left: calc(50% - var(--r)); width: calc(var(--r) * 2); top: calc(50% - 1px); height: 2px; }
+.sb-scope .vx { top: calc(50% - var(--r)); height: calc(var(--r) * 2); left: calc(50% - 1px); width: 2px; }
+.sb-scope .hx.thick { height: 6px; top: calc(50% - 3px); width: calc(var(--r) * .7); }
+.sb-scope .hx.thick.l { left: calc(50% - var(--r)); }
+.sb-scope .hx.thick.r { left: calc(50% + var(--r) * .3); }
+.sb-scope .vx.thick { width: 6px; left: calc(50% - 3px); height: calc(var(--r) * .7); top: calc(50% + var(--r) * .3); }
+.sb-scope .dot { position: absolute; left: calc(50% - 2px); top: calc(50% - 2px); width: 4px; height: 4px; background: var(--accent); }
+.sb-scope .tick { position: absolute; left: calc(50% - 6px); width: 12px; height: 2px; background: #0B0C0D; }
+.sb-scope .read { position: absolute; left: calc(50% + var(--r) * .38); top: calc(50% + var(--r) * .12); display: flex; flex-direction: column; gap: 4px; background: var(--panel); padding: 8px 12px; border-top: 2px solid var(--bone); }
+.sb-scope .read .sb-val { font-size: 12px; }
 .sb-hit { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; --hc: var(--bone); }
 .sb-hit i { position: absolute; width: 8px; height: 8px; border-color: var(--hc); border-style: solid; border-width: 0; }
 .sb-hit i:nth-child(1) { left: -14px; top: -14px; border-left-width: 2px; border-top-width: 2px; }

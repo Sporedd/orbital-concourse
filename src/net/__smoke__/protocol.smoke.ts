@@ -20,7 +20,7 @@ function test(name: string, fn: () => void): void {
 
 const weapon: WeaponDef = {
   id: 'w1', name: 'Molten Jakko Ripper', archetype: 'shotgun', rarity: 'epic', element: 'fire', level: 3,
-  damage: 14.256, fireRate: 1.5, auto: false, magSize: 6, reloadTime: 2.1, pellets: 8, spread: 0.09123,
+  damage: 14.256, fireRate: 1.5, auto: false, magSize: 6, reloadTime: 2.1, pellets: 8, spread: 0.09123, accuracy: 45, zoom: 1.1, adsSpread: 0.8,
   range: 30.04, critMultiplier: 2, elementChance: 0.25, perks: [{ id: 'splash', name: 'Splash', description: '' }], color: 0xff5a1f,
 };
 

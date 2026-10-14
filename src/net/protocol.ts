@@ -13,7 +13,9 @@
 import type {
   BossKind, Element, LootKind, MobKind, Rarity, RoundPhase, WeaponArchetype, WeaponDef,
 } from '@/core/types';
-import type { GearDef } from '@/gear/types';
+import { ADS, accuracyFromSpread } from '@/core/config';
+import { GEAR_SLOTS, type GearDef, type Loadout } from '@/gear/types';
+import { sanitizeGear } from '@/gear/inventory';
 
 // ---------------------------------------------------------------------------
 // Enum tables (index on the wire)
@@ -106,6 +108,18 @@ export interface PlayerW {
   w: [number, number, number] | 0;
   /** Revive progress 0..1 while downed and someone is holding E. */
   rv?: number;
+  /** Loadout version (host-side counter). A client that has a different version gets SnapMsg.ld. */
+  lv?: number;
+}
+
+/**
+ * A player's equipped gear (avatars wear it). Sent once per version per client in SnapMsg.ld,
+ * not every snapshot: 5 GearDefs are 1–2 KiB. Validated with sanitizeLoadout on receipt.
+ */
+export interface LoadoutW {
+  i: string;
+  v: number;
+  l: Loadout;
 }
 
 export interface LootW {
@@ -176,6 +190,8 @@ export interface SnapMsg {
   lr?: string[];
   fx?: FxW[];
   ev?: EvW[];
+  /** Loadouts this client has not seen at their current version (see LoadoutW). */
+  ld?: LoadoutW[];
 }
 
 export interface WelcomeMsg {
@@ -240,6 +256,8 @@ export interface ClientTickMsg {
   hl?: number;
   /** Self damage (own grenades): [amount, element] */
   sd?: [number, number][];
+  /** Equipped gear, sent on the first tick and whenever gear:changed fires (versioned by the host). */
+  ld?: Loadout;
 }
 
 export interface ByeMsg { t: 'bye'; reason: string }
@@ -380,6 +398,9 @@ export function stubWeapon(s: WeaponStats, id = 'net_weapon'): WeaponDef {
     reloadTime: 1,
     pellets: s.pellets,
     spread: s.spread,
+    accuracy: accuracyFromSpread(s.spread),
+    zoom: ADS.archetype[s.archetype].zoom,
+    adsSpread: ADS.archetype[s.archetype].adsSpread,
     range: s.range,
     critMultiplier: s.critMultiplier,
     elementChance: s.elementChance,
@@ -402,4 +423,18 @@ export function sanitizeWeapon(w: unknown): WeaponDef | null {
     ...(d as WeaponDef),
     perks: Array.isArray(d.perks) ? d.perks : [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Loadouts (gear on avatars)
+// ---------------------------------------------------------------------------
+/** Validate a loadout from the wire: each piece through sanitizeGear, in the slot it claims. */
+export function sanitizeLoadout(raw: unknown): Loadout {
+  const out: Loadout = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const slot of GEAR_SLOTS) {
+    const def = sanitizeGear((raw as Record<string, unknown>)[slot]);
+    if (def && def.slot === slot) out[slot] = def;
+  }
+  return out;
 }

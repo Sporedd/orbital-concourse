@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PLAYER } from '@/core/config';
+import { CAMERA, PLAYER } from '@/core/config';
 import type { DamageOpts, EnemyRegistry, PlayerStats, WeaponDef, WeaponPerk } from '@/core/types';
 import { EnemyManager } from '@/enemies';
 import { PERKS, generateWeapon, starterWeapon } from '@/loot/weapons';
@@ -652,5 +652,95 @@ describe('viewmodel & real enemies (headless)', () => {
     expect(dealt).toHaveLength(1);
     expect(dealt[0].crit).toBe(false);
     expect(dealt[0].amount).toBeCloseTo(w.damage);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('aim down sights (RMB)', () => {
+  const rifle = () => weapon({ archetype: 'rifle', spread: 0.02, zoom: 1.45, adsSpread: 0.5, magSize: 30 });
+
+  it('aiming lowers spread and FOV; releasing restores both', () => {
+    ready(rifle());
+    const hipSpread = player.spread!;
+    expect(hipSpread).toBeGreaterThan(0);
+    expect(ctx.camera.fov).toBeCloseTo(CAMERA.fov, 1);
+    expect(player.aiming).toBe(false);
+
+    ctx.fakeInput.mousePress(2);
+    frames(0.3);
+    expect(player.aiming).toBe(true);
+    expect(player.zoom).toBeCloseTo(1.45);
+    expect(ctx.camera.fov).toBeCloseTo(CAMERA.fov / 1.45, 1);
+    expect(player.spread!).toBeCloseTo(hipSpread * 0.5, 5);
+    expect(ev.of('weapon:ads')).toEqual([{ playerId: 'p1', aiming: true, zoom: 1.45 }]);
+
+    ctx.fakeInput.mouseRelease(2);
+    frames(0.3);
+    expect(player.aiming).toBe(false);
+    expect(ctx.camera.fov).toBeCloseTo(CAMERA.fov, 1);
+    expect(player.spread!).toBeCloseTo(hipSpread, 5);
+    expect(ev.of('weapon:ads').at(-1)).toEqual({ playerId: 'p1', aiming: false, zoom: 1 });
+  });
+
+  it('reloading cancels ADS (and it resumes after if RMB is still held)', () => {
+    ready(rifle());
+    player.ammo = 5;
+    ctx.fakeInput.mousePress(2);
+    frames(0.3);
+    expect(player.aiming).toBe(true);
+    ctx.fakeInput.press('KeyR');
+    frame();
+    ctx.fakeInput.release('KeyR');
+    expect(player.aiming).toBe(false);
+    frames(0.3);
+    expect(ctx.camera.fov).toBeGreaterThan(CAMERA.fov / 1.45 + 5); // zoomed back out during the reload
+    frames(2.5); // reload done, still holding RMB
+    expect(player.aiming).toBe(true);
+  });
+
+  it('aiming blocks sprint and walks at 70 %', () => {
+    ready(rifle());
+    ctx.fakeInput.mousePress(2);
+    ctx.fakeInput.press('KeyW');
+    ctx.fakeInput.press('ShiftLeft');
+    frames(1);
+    const speed = Math.hypot(player.velocity.x, player.velocity.z);
+    expect(speed).toBeCloseTo(PLAYER.walkSpeed * 0.7, 1);
+    expect(ctx.camera.fov).toBeCloseTo(CAMERA.fov / 1.45, 1);
+  });
+
+  it('weapons without zoom fields (old saves / net stubs) fall back to the archetype optic', () => {
+    const w = weapon({ archetype: 'sniper' });
+    delete (w as Partial<WeaponDef>).zoom;
+    delete (w as Partial<WeaponDef>).adsSpread;
+    ready(w);
+    ctx.fakeInput.mousePress(2);
+    frames(0.3);
+    expect(player.zoom).toBeCloseTo(3);
+    expect(ctx.camera.fov).toBeCloseTo(CAMERA.fov / 3, 1);
+  });
+});
+
+describe('bloom', () => {
+  it('spread grows with sustained fire and recovers 0.5 s after the last shot', () => {
+    ready(weapon({ archetype: 'rifle', auto: true, fireRate: 10, spread: 0.02, magSize: 60 }));
+    const first = player.spread!;
+    ctx.fakeInput.mousePress(0);
+    frames(0.5);
+    ctx.fakeInput.mouseRelease(0);
+    frame();
+    const bloomed = player.spread!;
+    expect(bloomed).toBeGreaterThan(first * 1.5);
+    frames(0.5);
+    expect(player.spread!).toBeCloseTo(first, 6);
+  });
+
+  it('the first shot after a pause fires at base accuracy', () => {
+    ready(weapon({ archetype: 'sniper', spread: 0.001 }));
+    const base = player.spread!;
+    click();
+    expect(player.spread!).toBeGreaterThan(base);
+    frames(0.6);
+    expect(player.spread!).toBeCloseTo(base, 8);
   });
 });

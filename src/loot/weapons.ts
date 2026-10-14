@@ -9,6 +9,7 @@ import {
   type Element, type Rarity, type WeaponArchetype, type WeaponDef, type WeaponPerk,
 } from '@/core/types';
 import { pick, randInt, randRange } from '@/core/rng';
+import { ACCURACY, ADS, accuracyFromSpread, spreadFromAccuracy } from '@/core/config';
 
 type Rng = () => number;
 
@@ -17,15 +18,28 @@ type Rng = () => number;
 // ---------------------------------------------------------------------------
 interface ArchetypeBase {
   damage: number; fireRate: number; auto: boolean; magSize: number; reloadTime: number;
-  pellets: number; spread: number; range: number; critMultiplier: number;
+  pellets: number; range: number; critMultiplier: number;
+  /** Base accuracy 0..100 (config ACCURACY.base); `spread` is derived from it. */
+  accuracy: number; spread: number;
+  /** ADS FOV divisor + aimed spread multiplier (config ADS.archetype). */
+  zoom: number; adsSpread: number;
 }
 
+type ArchetypeStats = Omit<ArchetypeBase, 'accuracy' | 'spread' | 'zoom' | 'adsSpread'>;
+const withDerived = (a: WeaponArchetype, b: ArchetypeStats): ArchetypeBase => ({
+  ...b,
+  accuracy: ACCURACY.base[a],
+  spread: spreadFromAccuracy(ACCURACY.base[a]),
+  zoom: ADS.archetype[a].zoom,
+  adsSpread: ADS.archetype[a].adsSpread,
+});
+
 export const ARCHETYPES: Record<WeaponArchetype, ArchetypeBase> = {
-  pistol: { damage: 22, fireRate: 4, auto: false, magSize: 12, reloadTime: 1.2, pellets: 1, spread: 0.012, range: 120, critMultiplier: 2.0 },
-  smg: { damage: 11, fireRate: 12, auto: true, magSize: 36, reloadTime: 1.6, pellets: 1, spread: 0.04, range: 70, critMultiplier: 1.6 },
-  shotgun: { damage: 12, fireRate: 1.5, auto: false, magSize: 6, reloadTime: 2.0, pellets: 8, spread: 0.11, range: 35, critMultiplier: 1.5 },
-  rifle: { damage: 17, fireRate: 7, auto: true, magSize: 30, reloadTime: 1.8, pellets: 1, spread: 0.022, range: 110, critMultiplier: 1.8 },
-  sniper: { damage: 95, fireRate: 1, auto: false, magSize: 5, reloadTime: 2.4, pellets: 1, spread: 0.002, range: 250, critMultiplier: 3.0 },
+  pistol: withDerived('pistol', { damage: 22, fireRate: 4, auto: false, magSize: 12, reloadTime: 1.2, pellets: 1, range: 120, critMultiplier: 2.0 }),
+  smg: withDerived('smg', { damage: 11, fireRate: 12, auto: true, magSize: 36, reloadTime: 1.6, pellets: 1, range: 70, critMultiplier: 1.6 }),
+  shotgun: withDerived('shotgun', { damage: 12, fireRate: 1.5, auto: false, magSize: 6, reloadTime: 2.0, pellets: 8, range: 35, critMultiplier: 1.5 }),
+  rifle: withDerived('rifle', { damage: 17, fireRate: 7, auto: true, magSize: 30, reloadTime: 1.8, pellets: 1, range: 110, critMultiplier: 1.8 }),
+  sniper: withDerived('sniper', { damage: 95, fireRate: 1, auto: false, magSize: 5, reloadTime: 2.4, pellets: 1, range: 250, critMultiplier: 3.0 }),
 };
 export const ARCHETYPE_LIST: readonly WeaponArchetype[] = ['pistol', 'smg', 'shotgun', 'rifle', 'sniper'];
 export const ARCHETYPE_LABEL: Record<WeaponArchetype, string> = {
@@ -116,7 +130,6 @@ const LEGENDARY_FLAIR = [
 // Helpers
 // ---------------------------------------------------------------------------
 const round2 = (v: number) => Math.round(v * 100) / 100;
-const round3 = (v: number) => Math.round(v * 1000) / 1000;
 
 export function blendColor(a: number, b: number, t: number): number {
   return new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
@@ -127,10 +140,21 @@ export function weaponDps(w: WeaponDef): number {
   return w.damage * w.pellets * w.fireRate;
 }
 
-/** 0..100 accuracy score derived from spread (for the weapon card). */
+/**
+ * 0..100 accuracy score (for the weapon card). Derived from the spread the gun actually fires
+ * with (inverse of spreadFromAccuracy), so it equals `w.accuracy` for generated weapons and stays
+ * truthful for hand-made defs (tests, net stubs) that only set a spread.
+ */
 export function weaponAccuracy(w: WeaponDef): number {
-  return Math.round(THREE.MathUtils.clamp(100 - (w.spread / 0.14) * 100, 0, 100));
+  return accuracyFromSpread(w.spread);
 }
+
+/** Accuracy roll: ±5 around the archetype base, skewed up by rarity (+2.5 per tier, legendary up to +15). */
+const ACC_SPAN = 5;
+const ACC_RARITY_SKEW = 2.5;
+/** Rare+ guns whose accuracy roll came out on the steady side get a +10 % stronger optic. */
+const OPTIC_BONUS = 1.1;
+const SNIPER_LEGENDARY_ZOOM = 3.5;
 
 export const tierDamageMult = (tier: number) => 1 + 0.18 * (Math.max(1, tier) - 1);
 
@@ -161,7 +185,14 @@ export function generateWeapon(rng: Rng, nextId: (p: string) => string, tier: nu
   const fireRate = base.fireRate * (1 + rolls.fireRate);
   const magSize = Math.max(2, Math.round(base.magSize * (1 + rolls.magSize)));
   const reloadTime = base.reloadTime * (1 - rolls.reload);
-  const spread = base.spread * (1 - rolls.spread);
+  // Accuracy reuses the spread roll (no extra rng draw: keeps seeded generation stable).
+  const accRoll = rolls.spread / 0.15; // -1..1, positive = steadier
+  const accuracy = Math.round(THREE.MathUtils.clamp(base.accuracy + accRoll * ACC_SPAN + ACC_RARITY_SKEW * rIdx, 5, 99));
+  const spread = spreadFromAccuracy(accuracy);
+  // ADS optic: archetype base; rare+ with a steady roll gets +10 %; legendary snipers get the big glass.
+  let zoom = base.zoom;
+  if (archetype === 'sniper' && rarity === 'legendary') zoom = SNIPER_LEGENDARY_ZOOM;
+  else if (rIdx >= 2 && rolls.spread > 0) zoom = round2(base.zoom * OPTIC_BONUS);
 
   // Element
   let element: Element = 'none';
@@ -207,7 +238,10 @@ export function generateWeapon(rng: Rng, nextId: (p: string) => string, tier: nu
     magSize,
     reloadTime: round2(reloadTime),
     pellets: base.pellets,
-    spread: round3(spread),
+    spread,
+    accuracy,
+    zoom,
+    adsSpread: base.adsSpread,
     range: base.range,
     critMultiplier: base.critMultiplier,
     elementChance,
@@ -232,6 +266,9 @@ export function starterWeapon(nextId: (p: string) => string): WeaponDef {
     reloadTime: b.reloadTime,
     pellets: b.pellets,
     spread: b.spread,
+    accuracy: b.accuracy,
+    zoom: b.zoom,
+    adsSpread: b.adsSpread,
     range: b.range,
     critMultiplier: b.critMultiplier,
     elementChance: 0,
