@@ -30,6 +30,8 @@ const _c = new THREE.Vector3();
 export class EnemyManager implements EnemyRegistry, EnemyEnv {
   readonly enemies: BaseEnemy[] = [];
   readonly projectiles: ProjectileSystem;
+  /** Sim time scale for enemies + projectiles (Deadeye sets 0.5). update() scales its dt by it. */
+  private scale = 1;
 
   constructor(readonly ctx: GameContext) {
     this.projectiles = new ProjectileSystem(ctx);
@@ -108,9 +110,19 @@ export class EnemyManager implements EnemyRegistry, EnemyEnv {
     for (const e of this.enemies) this.removeObjects(e);
     this.enemies.length = 0;
     this.projectiles.clear();
+    this.scale = 1;
+  }
+
+  get timeScale(): number {
+    return this.scale;
+  }
+
+  setTimeScale(scale: number): void {
+    this.scale = Number.isFinite(scale) ? Math.max(0, Math.min(4, scale)) : 1;
   }
 
   update(dt: number): void {
+    dt *= this.scale;
     const list = this.enemies;
     // index loop: summoners may append grunts mid-update (they update this frame too)
     for (let i = 0; i < list.length; i++) list[i].update(dt);

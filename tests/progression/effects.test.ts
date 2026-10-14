@@ -73,7 +73,7 @@ describe('skill effects', () => {
     expect(player.health).toBeCloseTo(50 + 100 * 0.1);
   });
 
-  it('Heavy Hands bridges the melee bonus as a follow-up hit; Executioner finishes low targets', () => {
+  it('Heavy Hands is read by the player (extras.meleeMult, no follow-up hit); Executioner finishes low targets', () => {
     boot('vanguard');
     buy('van_heavy_hands', 3);
     buy('van_knuckles', 3);
@@ -84,10 +84,10 @@ describe('skill effects', () => {
     const emitHit = (amount: number) => ctx.events.emit('damage:dealt', {
       enemyId: 'e1', playerId: 'p1', amount, crit: false, element: 'none', point: new THREE.Vector3(), killed: false, cause: 'melee',
     });
+    expect(prog.extras.meleeMult).toBeCloseTo(1.45); // +45% at rank 3, multiplied in src/player/melee.ts
     e.health = 90;
     emitHit(10);
-    expect(e.hits[0].amount).toBeCloseTo(10 * 0.45); // +45% at rank 3
-    expect(e.hits[0].opts?.cause).toBe('melee');
+    expect(e.hits).toHaveLength(0); // MELEE_BRIDGE off: no follow-up hit
     e.health = 20; // below 25 %: Executioner finishes it
     e.state.health = 20;
     emitHit(10);

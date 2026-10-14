@@ -71,7 +71,8 @@ Flavour lines live in the data (`flavour`) and show in the detail panel.
 Hook kinds (see §5):
 `stat` = PlayerStats via `apply()` · `cond` = PlayerStats modifier evaluated whenever stats are read ·
 `buff` = timed PlayerStats modifier · `event` = listener in `effects.ts` using existing contracts ·
-`player:<name>` = needs player code (**not live**, shown dimmed `SOON`).
+`player:<name>` = implemented in the player code (live once the hook is listed in
+`WIRED_PLAYER_HOOKS`, `skills.ts`; a node on an unlisted hook renders dimmed `SOON`).
 
 ### 3.1 Vanguard
 
@@ -83,7 +84,7 @@ Hook kinds (see §5):
 | A4 ◆ | van_overcharge | Overcharge Cell | 1 | 40 % | When your shield breaks it snaps back to 40 % (15 s cd) | A1 | event | effectively +40 % shield per fight |
 | A5 | van_hold_line | Hold the Line | 2 | 6 % | +gun damage while your shield is full | A3 | cond | rewards not getting hit |
 | A6 ◆ | van_immovable | Immovable | 1 | — | +35 % shield capacity, −10 % move speed | A4 | stat | trade-off |
-| B1 | van_heavy_hands | Heavy Hands | 3 | 15 % | +melee damage | — | event* | *follow-up hit until player reads `extras.meleeMult` |
+| B1 | van_heavy_hands | Heavy Hands | 3 | 15 % | +melee damage | — | extras.meleeMult | read by `src/player/melee.ts` (bridge off) |
 | B2 | van_knuckles | Iron Knuckles | 3 | 4 % | Melee hits restore % of max shield | — | event | |
 | B3 | van_finisher | Finisher | 3 | 5 % | Melee kills heal % of max health | B1 | event | |
 | B4 ◆ | van_crowd_work | Crowd Work | 1 | — | Melee kills refund a grenade (4 s cd) and +6 hype | B2 | event | stacks with Pitfighter 3/3 by design |
@@ -107,10 +108,10 @@ Hook kinds (see §5):
 | A4 ◆ | mar_bullseye | Bullseye | 1 | 1 | Crit hits put a round back in the magazine (once per shot) | A2 | event | infinite mag if you never miss the head |
 | A5 | mar_patience | Patience | 2 | 12 % | +crit damage on the first shot after 1 s without firing | A3 | cond | sniper/pistol rhythm |
 | A6 ◆ | mar_glass_jaw | Glass Jaw | 1 | — | +25 % gun damage, −40 % shield capacity (and so recharge) | A4 | stat | trade-off; switch to `−50 % regen` once player reads `extras.shieldRegenMult` |
-| B1 | mar_breath | Breath Control | 3 | 10 % | −ADS spread | — | **player:extras.adsSpreadMult** | SOON |
+| B1 | mar_breath | Breath Control | 3 | 10 % | −ADS spread | — | **player:extras.adsSpreadMult** | live |
 | B2 | mar_quickdraw | Quickdraw | 3 | 5 % | −reload time | — | stat | |
 | B3 | mar_scoped | Scoped In | 3 | 5 % | +gun damage while aiming down sights | B2 | cond (`player.aiming`) | live (ADS exposes `aiming`) |
-| B4 ◆ | mar_ricochet | Ricochet Doctrine | 1 | 2 m | Bullets that miss within 2 m of an enemy curve into it | B2 | **player:ricochetDoctrine** | SOON |
+| B4 ◆ | mar_ricochet | Ricochet Doctrine | 1 | 2 m | Bullets that miss within 2 m of an enemy curve into it for 70 % damage (one curve per shot) | B2 | **player:ricochetDoctrine** | live; one per shot so shotguns don't auto-hit |
 | B5 | mar_specialist | Specialist | 2 | 8 % | +gun damage with a pistol or sniper | B3 | cond | |
 | B6 ◆ | mar_one_shot | One Shot, One Kill | 1 | — | Pistols and snipers: +30 % damage and crit damage, −20 % fire rate | B3 | cond | |
 | C1 | mar_light_step | Light Step | 3 | 3 % | +move speed | — | stat | |
@@ -128,15 +129,15 @@ Hook kinds (see §5):
 | A1 | tec_conductor | Conductor | 3 | 5 % | Elemental hits get an extra chance to apply their status | — | event | |
 | A2 | tec_overclock | Overclock | 3 | 4 % | +fire rate | — | stat | |
 | A3 | tec_catalyst | Catalyst | 3 | 10 % | Elemental kills burst for % of the victim's max health in 3 m (same element) | A1 | event | no chain: bursts are `cause: 'explosion'` |
-| A4 ◆ | tec_overheat | Overheat | 1 | 40 % | Fire rate ramps up to +40 % over 1.5 s of sustained fire; spread grows up to +50 % | A2 | **player:overheat** | SOON |
+| A4 ◆ | tec_overheat | Overheat | 1 | 40 % | Fire rate ramps up to +40 % over 1.5 s of sustained fire; spread grows up to +50 % | A2 | **player:overheat** | live |
 | A5 | tec_affinity | Elemental Affinity | 2 | 8 % | +gun damage with an elemental weapon | A3 | cond | |
 | A6 ◆ | tec_meltdown | Meltdown | 1 | 25 % | Burning enemies explode on death: 25 % of their max health as fire damage in 4 m, igniting what survives | A3 | event | |
-| B1 | tec_payload | Bigger Payload | 3 | 12 % | +grenade damage | — | **player:extras.grenadeDamageMult** | SOON |
+| B1 | tec_payload | Bigger Payload | 3 | 12 % | +grenade damage | — | **player:extras.grenadeDamageMult** | live |
 | B2 | tec_recycler | Recycler | 3 | 15 % | Grenade kills have a chance to refund a grenade | — | event | |
 | B3 | tec_cluster | Cluster Charge | 3 | 30 | Grenade kills set off a 3 m secondary blast (× gun damage) | B2 | event | |
 | B4 ◆ | tec_resupply | Field Resupply | 1 | — | Round start and every boss phase break: grenades to max, +50 % of a reserve load | B2 | event | |
-| B5 | tec_wide | Wide Spread | 2 | 15 % | +grenade radius | B3 | **player:extras.grenadeRadiusMult** | SOON |
-| B6 ◆ | tec_ordnance | Ordnance Bay | 1 | — | +2 max grenades, +30 % grenade damage, −10 % gun damage | B4 | **player:extras** | SOON |
+| B5 | tec_wide | Wide Spread | 2 | 15 % | +grenade radius | B3 | **player:extras.grenadeRadiusMult** | live (self-damage radius grows too) |
+| B6 ◆ | tec_ordnance | Ordnance Bay | 1 | — | +2 max grenades, +30 % grenade damage, −10 % gun damage | B4 | **player:extras** | live |
 | C1 | tec_scrounger | Scrounger | 3 | 20 % | Ammo pickups give more | — | event | |
 | C2 | tec_field_medic | Field Medic | 3 | 15 % | Health pickups heal more | — | event | |
 | C3 | tec_kitted | Kitted Out | 3 | 1.5 % | +gun damage per equipped gear piece | C1 | cond | 22.5 % with 5 pieces at rank 3 |
@@ -153,7 +154,7 @@ Hook kinds (see §5):
 | A2 | sho_spray | Spray and Pray | 3 | 5 % | +fire rate with an SMG or shotgun | — | cond | |
 | A3 | sho_feed | Feed Off the Crowd | 3 | 3 % | +gun damage per crowd tier above Cold | A1 | cond | 27 % while ROARING at rank 3 |
 | A4 ◆ | sho_showstopper | Showstopper | 1 | — | Multi-kills refill your magazine | A2 | event | |
-| A5 | sho_curtain | Curtain Call | 2 | 15 % | −Encore cooldown | A3 | **player:activeKey** | SOON until the key exists |
+| A5 | sho_curtain | Curtain Call | 2 | 15 % | −Encore cooldown | A3 | **player:activeKey** | live |
 | A6 ◆ | sho_sponsor | Sponsor's Favourite | 1 | +1 | Bosses drop one extra item for you (+0.3 rarity) | A4 | event (host) | |
 | B1 | sho_footwork | Footwork | 3 | 4 % | +move speed | — | stat | |
 | B2 | sho_in_your_face | In Your Face | 3 | 6 % | +gun damage with an SMG or shotgun | — | cond | |
@@ -175,12 +176,11 @@ Hook kinds (see §5):
 |---|---|---|---|---|---|---|---|---|
 | P1 | reload | Quick Hands | 3 | 6 % | −reload time | — | stat | old id/name: migrated |
 | P2 | speed | Fleet Foot | 3 | 4 % | +move speed | — | stat | old id/name: migrated |
-| P3 | pit_bandolier | Bandolier | 2 | 1 | +max grenades | P1 | **player:extras.extraGrenades** | SOON |
+| P3 | pit_bandolier | Bandolier | 2 | 1 | +max grenades | P1 | **player:extras.extraGrenades** | live (`PlayerState.maxGrenades`) |
 | P4 | pit_pack_mule | Pack Mule | 1 | — | Round clears give +1 grenade and 50 % of a reserve load | P2 | event | |
-| P5 | pit_second_wind | Second Wind | 1 | 2 s | Once per round, lethal damage leaves you at 1 HP with 2 s of invulnerability | P4 | **player:secondWind** | SOON |
+| P5 | pit_second_wind | Second Wind | 1 | 2 s | Once per round, lethal damage leaves you at 1 HP with half a shield and 2 s of invulnerability | P4 | **player:secondWind** | live |
 
-**Live today:** 72 of 81 nodes and the Storm Engine pulse. **Needs wiring:** 9 nodes + the 4 active
-keys (§6).
+**Live today:** all 81 nodes and all 4 actives on `Q` (§5.1).
 
 ## 4. Stacking rules
 
@@ -215,7 +215,7 @@ interface ClassProgression extends Progression {
   respec(): void;
 }
 interface SkillExtras {          // neutral values in brackets; mirrors GearStats conventions
-  meleeMult: number;             // [1] × melee damage            (bridged today, see §5.2)
+  meleeMult: number;             // [1] × melee damage            (read by player melee, §5.2)
   extraGrenades: number;         // [0] + max grenades (integer)  → maxGrenades()
   grenadeDamageMult: number;     // [1] × grenade damage           → grenades.ts explode
   grenadeRadiusMult: number;     // [1] × grenade radius
@@ -236,23 +236,35 @@ interface ActiveAbilityState {
 
 ### 5.1 Hook list (all `player:*`)
 
-| Hook | Who | What the player code does |
-|---|---|---|
-| `player:activeKey` | all actives, Curtain Call | On `KeyQ` (`justPressed`, alive, not in a screen): `(ctx.progression as ClassProgression).useActive()`. The live part of each active runs inside `useActive()` (damage, refills, buffs, shield). Add `Q` to the controls list. HUD: show `activeAbility.cooldownLeft` (optional). |
-| `player:shieldBash` | Vanguard active | While `activeAbility.active` and the class is `vanguard`: dash 6 m along the view over 0.35 s (reuse the voidrunner dash path in the controller), ignore damage in `takeDamage`. `useActive()` already deals the 3 m melee hit at the start. |
-| `player:deadeye` | Marksman active | While active: every bullet `crit = true` in `weapons.shoot`, and the sim time scale for enemies/projectiles is 0.5 (main loop: `enemies.update(dt * 0.5)`). `useActive()` applies a +50 % crit damage buff as the fallback. |
-| `player:secondWind` | Pit P5 | In `takeDamage`, when `health` would hit 0 and `hooks.includes('player:secondWind')` and not used this round: set health 1, 2 s invulnerability, `ui:message`. Reset on `round:started`. |
-| `player:overheat` | Technician A4 | In `WeaponSystem.update`: while the trigger is held, `heat` rises 0→1 over 1.5 s (drains in 0.5 s); fire rate × `(1 + 0.4·heat)`, spread × `(1 + 0.5·heat)`. |
-| `player:ricochetDoctrine` | Marksman B4 | In `shoot()` on a miss: find the nearest living enemy whose centre is within 2 m of the ray (segment-point distance); if it has line of sight from the closest ray point, apply the hit to it (no crit), with a bent tracer. |
-| `player:extras` | Bandolier, Bigger Payload, Wide Spread, Ordnance Bay, Breath Control | Read `extras` next to `gearExtras(ctx)`: `maxGrenades(ctx, base) + extras.extraGrenades`, grenade damage × `grenadeDamageMult`, radius × `grenadeRadiusMult`, ADS spread × `adsSpreadMult`, shield regen × `shieldRegenMult`, melee × `meleeMult`. Then flip `implemented: true` on those nodes in `skills.ts`. |
-| `rounds:starterWeapon` | class identity | `rounds/index.ts` / `net/client.ts` equip `ctx.loot.starterWeapon()` when both slots are empty. Use `generateWeapon(tier 1, 'common')` forced to `classDef.starterArchetype` (needs an `archetype` option on the loot generator, owned by loot). |
+Player helpers live in `src/player/shared.ts`: `classProgression(ctx)` (feature-detected, type-only
+import, so test fakes still work), `skillExtras(ctx)`, `hasSkillHook(ctx, id)`, `activeRunning(ctx, id)`.
 
-### 5.2 Bridges (remove when the player adopts the hook)
+| Hook | Who | Status | Implementation |
+|---|---|---|---|
+| `player:activeKey` | all actives, Curtain Call | **live** | `src/player/index.ts`: `KeyQ` (`justPressed`, so ignored while a screen captures input; alive only) → `useActive()`. Locked → `ui:message`; cooling down → quiet `empty` click. `effects.ts fireActive()` emits **`active:used`** (also when Storm Engine forces it); the player reacts to it with the player side of each active (below) plus fx/audio. The player emits **`active:ready`** on every not-ready → ready transition (cooldown over, or just unlocked). |
+| `player:shieldBash` | Vanguard active | **live** | `Controller.startForcedDash()`: 6 m along the view (horizontal) over 0.25 s, input ignored, walls still stop it, leaves at walk speed. Each frame of the dash `bashSweep()` hits every enemy within 1 m of the capsule once for `meleeDamage(ctx) × 1.5` (`cause: 'melee'`, so Knuckles/Executioner apply) and knocks it off the dash line: mobs get a 0.4 s stun + 36 m/s shove through their own collision (`BaseEnemy.velocity` / `state.stun`, feature-detected); bosses a 0.6 m nudge; other enemies a 2.5 m `resolveCapsule` push. 1 s invulnerability (`takeDamage` ignores; `PlayerState.invulnerable`). `viewmodel.bash()`, shake, blue flash. `useActive()` no longer deals the old 3 m radius hit. |
+| `player:deadeye` | Marksman active | **live** | While `activeAbility.active`: every bullet `crit = true` (× weapon crit × `critMult`) in `weapons.shoot` (Ricochet Doctrine curves too); the player calls `ctx.enemies.setTimeScale(0.5)` and restores 1 when it ends / on reset (`EnemyManager.update` scales its dt for enemies, their animation and projectiles; `clear()` resets it). Pale-blue flash on start/end. The +50 % crit-damage fallback buff is gone. |
+| `player:secondWind` | Pit P5 | **live** | `takeDamage`: when health hits 0, the hook is owned and it is unused this round → 1 HP, shield to ≥ 50 %, 2 s invulnerability, `ui:message` "SECOND WIND", white flash. Reset on `round:started` and `reset()`. |
+| `player:overheat` | Technician A4 | **live** | `WeaponSystem.heat`: rises 0→1 over 1.5 s while the trigger is held on a gun that can fire, drains to 0 in 0.5 s otherwise (reset on swap/death); fire rate × `(1 + 0.4·heat)`, spread × `(1 + 0.5·heat)` (shows in `PlayerState.spread`). |
+| `player:ricochetDoctrine` | Marksman B4 | **live** | `weapons.doctrineTarget()`: on a pellet that hits a wall or reaches max range, the living enemy whose centre is closest to the ray segment (≤ 2 m, ≥ 0.5 m down the ray) with line of sight from that ray point takes 70 % of the shot (no crit unless Deadeye), bullet cause, tracer bent at the ray point. One curve per trigger pull. |
+| `player:extras` | Bandolier, Bigger Payload, Wide Spread, Ordnance Bay, Breath Control, Heavy Hands | **live** | `maxGrenades(ctx, base)` = gear cap of `base + extraGrenades` (also `PlayerState.maxGrenades`); grenade damage × `grenadeDamageMult`, radius × `grenadeRadiusMult` (`grenades.ts`); aimed spread × `adsSpreadMult` (`currentSpread`); shield regen × `shieldRegenMult` (next to the gear one); melee × `meleeMult` (`melee.ts meleeDamage()`, also used by Shield Bash). |
+| `rounds:starterWeapon` | class identity | rounds/loot | `rounds/index.ts` / `net/client.ts` equip `ctx.loot.starterWeapon()` when both slots are empty. Use `generateWeapon(tier 1, 'common')` forced to `classDef.starterArchetype` (needs an `archetype` option on the loot generator, owned by loot). `player.equip()` needs nothing new. |
 
-- **Heavy Hands / Executioner melee bonus**: until the player multiplies melee damage by
-  `extras.meleeMult`, `effects.ts` deals the bonus as a follow-up hit on the same enemy
-  (`cause: 'melee'`, guarded against re-entry). When the player reads `extras.meleeMult`, set
-  `MELEE_BRIDGE = false` in `effects.ts`.
+Technician **Shock Pulse** and Showman **Encore** stay in `useActive()` (nova + 25 % shield;
+magazine refill via the clamping `ammo` setter + `addAmmo(1)` + the +20 % fire-rate buff, which
+`getStats()` picks up per shot); the player adds the flash/burst and audio (`explosion`,
+`shield_recharge` / `reload`, `pickup_weapon`).
+
+Co-op: actives are local. Deadeye's time scale only acts where the `EnemyManager` simulates (host
+or solo), so a host's Deadeye slows enemies for everyone and a client's does nothing to the
+host's sim (its forced crits still apply). Shield Bash knockback on a client is overwritten by
+host snapshots (the damage goes through as usual).
+
+### 5.2 Bridges
+
+- **Heavy Hands / Executioner melee bonus**: the player multiplies melee damage by
+  `extras.meleeMult` (`src/player/melee.ts`), so `MELEE_BRIDGE = false` in `effects.ts`.
+  Executioner's +50 % against bosses and the finisher remain follow-up hits there.
 
 ### 5.3 Contracts the live effects use
 
@@ -291,5 +303,9 @@ round are untouched. Ranks in nodes of another class than the saved `classId` ar
 - `skill:changed` — as before on every invest; a respec or class change emits it once with
   `skillId: '*'` (the player re-reads max health/shield from `stats`).
 - `class:changed` — `{ classId, previous }` (added to `GameEvents`).
+- `active:used` — `{ playerId, abilityId, name, cooldown, duration, forced }` from `useActive()`
+  (and capstone-forced fires); the player runs the player side of the active on it.
+- `active:ready` — `{ playerId, abilityId, name }` from the local player when the active comes off
+  cooldown or is unlocked (for a HUD cooldown chip; the HUD can also poll `activeAbility`).
 
 Screenshots (1280×720): `docs/screenshots/07-class-select.jpg`, `08-skilltree-v2.jpg`, `09-skilltree-v2-dev.jpg` (dev flag).

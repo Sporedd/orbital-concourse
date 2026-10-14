@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { PLAYER } from '@/core/config';
 import type { GameContext } from '@/core/types';
-import { getStats, runDamageMult } from './shared';
+import { getStats, runDamageMult, skillExtras } from './shared';
 
 export const GRENADE_SPEED = 16;
 export const GRENADE_UP_SPEED = 3;
@@ -125,9 +125,11 @@ export class GrenadeSystem {
   private explode(g: Grenade): void {
     const ctx = this.ctx;
     const pos = g.pos;
-    const R = PLAYER.grenadeRadius;
+    // skill extras: Bigger Payload / Ordnance Bay (damage), Wide Spread (radius)
+    const x = skillExtras(ctx);
+    const R = PLAYER.grenadeRadius * Math.max(0.1, x.grenadeRadiusMult);
     const stats = getStats(ctx);
-    ctx.enemies?.damageRadius(pos, R, PLAYER.grenadeDamage * stats.damageMult * runDamageMult(ctx), {
+    ctx.enemies?.damageRadius(pos, R, PLAYER.grenadeDamage * stats.damageMult * x.grenadeDamageMult * runDamageMult(ctx), {
       sourceId: this.host.id,
       point: pos.clone(),
       element: 'none',

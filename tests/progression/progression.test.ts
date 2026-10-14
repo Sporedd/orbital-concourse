@@ -30,9 +30,10 @@ const killed = (isBoss: boolean) => ({
 });
 
 describe('xp curve', () => {
-  it('matches 100·L^1.4 and is strictly increasing', () => {
+  it('matches 100·L^1.1 (docs/SKILL_TREE.md pacing) and is strictly increasing', () => {
     expect(xpForLevel(1)).toBe(100);
-    expect(xpForLevel(2)).toBe(Math.round(100 * 2 ** 1.4));
+    expect(xpForLevel(2)).toBe(Math.round(100 * 2 ** 1.1));
+    expect(xpForLevel(0)).toBe(100); // clamped: a broken save never asks for 0 XP
     for (let l = 2; l < 60; l++) expect(xpForLevel(l)).toBeGreaterThan(xpForLevel(l - 1));
   });
 });
@@ -121,18 +122,40 @@ describe('Progression', () => {
   });
 
   it('unimplemented nodes are SOON (not buyable) but do not block their dependants', () => {
-    prog.addXp(1e6);
-    prog.setClass('marksman');
+    // every node is wired today: mark two unimplemented for the test
     const breath = skillById('mar_breath')!;
-    expect(breath.implemented).toBe(false);
-    expect(prog.lockReason('mar_breath')).toBe('SOON');
-    expect(prog.canUpgrade('mar_breath')).toBe(false);
-    buy('mar_quickdraw', 3);
-    buy('mar_scoped'); // requires quickdraw (live)
-    // Bandolier (SOON) gates nothing live; Pack Mule requires Fleet Foot
-    buy('speed', 3);
+    const quick = skillById('mar_quickdraw')!;
+    breath.implemented = false;
+    quick.implemented = false;
+    try {
+      prog.addXp(1e6);
+      prog.setClass('marksman');
+      expect(prog.lockReason('mar_breath')).toBe('SOON');
+      expect(prog.canUpgrade('mar_breath')).toBe(false);
+      expect(prog.lockReason('mar_quickdraw')).toBe('SOON');
+      // Scoped In requires Quickdraw (SOON): an unbuyable prerequisite counts as met
+      skillById('mar_breath')!.implemented = true;
+      buy('mar_breath', 3);
+      buy('mar_scoped');
+    } finally {
+      breath.implemented = true;
+      quick.implemented = true;
+    }
+  });
+
+  it('the 9 player-hook nodes are buyable without the dev flag', () => {
+    prog.addXp(1e6);
+    prog.setClass('technician');
+    buy('tec_payload', 3);
+    expect(prog.hooks).toContain('player:extras.grenadeDamageMult');
+    expect(prog.extras.grenadeDamageMult).toBeCloseTo(1.36);
+    buy('reload', 3);
+    buy('pit_bandolier', 2);
+    expect(prog.extras.extraGrenades).toBe(2);
+    buy('speed');
     buy('pit_pack_mule');
-    expect(prog.lockReason('pit_second_wind')).toBe('SOON');
+    buy('pit_second_wind');
+    expect(prog.hooks).toContain('player:secondWind');
   });
 
   it('the dev flag makes unimplemented nodes buyable and lists their hooks', () => {

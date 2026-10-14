@@ -51,6 +51,10 @@ export class Controller {
   dashCooldown = 0;
   /** True on the frame a dash fired (the player shakes the camera). */
   dashedThisFrame = false;
+  /** Seconds left of a forced dash (Shield Bash): horizontal velocity is pinned to it. */
+  forcedDashLeft = 0;
+  private readonly forcedDashVel = new THREE.Vector3();
+  private dashExit = false;
   horizontalSpeed = 0;
   /** 0..~1.25, smoothed movement intensity used for bob (camera + viewmodel). */
   moveAmount = 0;
@@ -96,6 +100,22 @@ export class Controller {
     this.deathT = 0;
     this.coyote = 0;
     this.jumpBuffer = 0;
+    this.forcedDashLeft = 0;
+    this.dashExit = false;
+  }
+
+  /**
+   * Forced horizontal dash (Shield Bash): `distance` metres along (dirX, dirZ) over `duration`
+   * seconds. Movement input is ignored meanwhile; walls still stop it (capsule collision).
+   */
+  startForcedDash(dirX: number, dirZ: number, distance: number, duration: number): void {
+    const h = Math.hypot(dirX, dirZ);
+    if (!(h > 1e-5) || !(duration > 0)) return;
+    const speed = distance / duration;
+    this.forcedDashVel.set((dirX / h) * speed, 0, (dirZ / h) * speed);
+    this.forcedDashLeft = duration;
+    this.velocity.x = this.forcedDashVel.x;
+    this.velocity.z = this.forcedDashVel.z;
   }
 
   look(active: boolean): void {
@@ -146,7 +166,21 @@ export class Controller {
     const wishX = (-s * fwd + c * strafe) * speed;
     const wishZ = (-c * fwd - s * strafe) * speed;
 
-    if (this.onGround) {
+    if (this.forcedDashLeft > 0) {
+      // pinned dash velocity (the last frame covers only the remaining fraction)
+      const f = Math.min(dt, this.forcedDashLeft) / dt;
+      this.forcedDashLeft = Math.max(0, this.forcedDashLeft - dt);
+      v.x = this.forcedDashVel.x * f;
+      v.z = this.forcedDashVel.z * f;
+      // the frame after leaves at walking speed along the dash, so it doesn't slide on
+      if (this.forcedDashLeft <= 0) this.dashExit = true;
+    } else if (this.dashExit) {
+      this.dashExit = false;
+      const h = this.forcedDashVel.length();
+      const keep = h > PLAYER.walkSpeed ? PLAYER.walkSpeed / h : 1;
+      v.x = this.forcedDashVel.x * keep;
+      v.z = this.forcedDashVel.z * keep;
+    } else if (this.onGround) {
       const k = damp(hasInput ? GROUND_ACCEL : GROUND_FRICTION, dt);
       v.x += (wishX - v.x) * k;
       v.z += (wishZ - v.z) * k;

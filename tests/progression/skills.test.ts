@@ -6,7 +6,7 @@ import {
   BRANCHES, CAPSTONE_GATE, CLASSES, CLASS_IDS, PIT, SKILLS, TIER_GATE, classSkills, pitSkills, pointsBudget, rankValue,
   skillById, visibleSkills,
 } from '@/progression';
-import { baseExtras, baseStats } from '@/progression/skills';
+import { WIRED_PLAYER_HOOKS, baseExtras, baseStats } from '@/progression/skills';
 
 describe('skill data', () => {
   it('ids are unique and resolvable', () => {
@@ -85,8 +85,19 @@ describe('skill data', () => {
     }
   });
 
-  it('hooks: player:* nodes are not implemented, everything else is', () => {
-    for (const s of SKILLS) expect(s.implemented, s.id).toBe(!s.hook.startsWith('player:'));
+  it('hooks: player:* nodes are live once their hook is wired, everything else is live', () => {
+    for (const s of SKILLS) {
+      expect(s.implemented, s.id).toBe(!s.hook.startsWith('player:') || WIRED_PLAYER_HOOKS.has(s.hook));
+    }
+  });
+
+  it('every node is wired (the 9 player-hook nodes included)', () => {
+    const player = SKILLS.filter((s) => s.hook.startsWith('player:'));
+    expect(player.map((s) => s.id).sort()).toEqual([
+      'mar_breath', 'mar_ricochet', 'pit_bandolier', 'pit_second_wind', 'sho_curtain',
+      'tec_ordnance', 'tec_overheat', 'tec_payload', 'tec_wide',
+    ]);
+    for (const s of SKILLS) expect(s.implemented, s.id).toBe(true);
   });
 
   it('descriptions with {value} have a value; flavour is present', () => {

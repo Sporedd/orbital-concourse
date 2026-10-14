@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { PLAYER } from '@/core/config';
 import type { Enemy, GameContext } from '@/core/types';
-import { gearExtras, getStats, runDamageMult } from './shared';
+import { gearExtras, getStats, runDamageMult, skillExtras } from './shared';
 
 const HALF_CONE = (30 * Math.PI) / 180; // ~60 degree cone
 
@@ -56,8 +56,13 @@ export function performMelee(
     best.position.z - (dz / d) * r,
   );
 
-  const amount = PLAYER.meleeDamage * getStats(ctx).damageMult * gearExtras(ctx).meleeMult * runDamageMult(ctx);
+  const amount = meleeDamage(ctx);
   best.damage(amount, { point, element: 'none', crit: false, sourceId, applyStatus: false, cause: 'melee' });
   ctx.fx.burst(point, 0xffffff, 12);
   return best;
+}
+
+/** One melee hit: base × stats.damageMult × gear meleeMult × skill meleeMult × run modifiers. */
+export function meleeDamage(ctx: GameContext): number {
+  return PLAYER.meleeDamage * getStats(ctx).damageMult * gearExtras(ctx).meleeMult * skillExtras(ctx).meleeMult * runDamageMult(ctx);
 }

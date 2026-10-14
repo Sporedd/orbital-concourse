@@ -7,7 +7,7 @@ import { ELEMENT_COLORS } from '@/core/types';
 import type { Enemy, GameContext, PlayerStats, WeaponArchetype, WeaponDef } from '@/core/types';
 import type { Controller } from './controller';
 import { SWAP_TIME, type Viewmodel } from './viewmodel';
-import { adsOf, damp, gearExtras, getStats, lerp, runDamageMult, smooth } from './shared';
+import { activeRunning, adsOf, damp, gearExtras, getStats, hasSkillHook, lerp, runDamageMult, skillExtras, smooth } from './shared';
 import { createRng } from '@/core/rng';
 
 // ---- tunables ---------------------------------------------------------------
@@ -25,6 +25,16 @@ const RAMP_WINDOW = 0.5;
 const RAMP_PER_STACK = 0.03;
 const RAMP_MAX_STACKS = 10;
 const DOUBLE_TAP_CHANCE = 0.1;
+
+// ---- skill hooks (docs/SKILL_TREE.md §5.1) ----------------------------------------------------
+/** Overheat (Technician A4): heat 0→1 over `rise` s of held trigger, back to 0 in `drain` s. */
+export const OVERHEAT = { rise: 1.5, drain: 0.5, fireRate: 0.4, spread: 0.5 } as const;
+/**
+ * Ricochet Doctrine (Marksman B4): a miss that passes within `radius` m of an enemy's centre
+ * curves into it for `factor` × the shot's damage. At most `perShot` curves per trigger pull,
+ * so shotguns don't turn every stray pellet into a hit.
+ */
+export const DOCTRINE = { radius: 2, factor: 0.7, perShot: 1, minAlong: 0.5 } as const;
 
 interface RecoilProfile {
   pitch: number; // camera kick, rad
@@ -83,6 +93,8 @@ export class WeaponSystem {
   private rampStacks = 0;
   /** Bloom: extra spread multiplier from sustained fire (0 = first-shot accuracy). */
   bloom = 0;
+  /** Overheat (skill): 0..1 heat from holding the trigger; scales fire rate and spread. */
+  heat = 0;
   /** Aim down sights: held RMB and allowed (no reload/swap/melee/grenade). */
   aiming = false;
   /** 0..1 linear hip→ADS tween (eased via smooth() for presentation). */
@@ -187,6 +199,7 @@ export class WeaponSystem {
     this.triggerBuffer = 0;
     this.rampStacks = 0;
     this.bloom = 0;
+    this.heat = 0;
     this.setAiming(false);
     this.aimT = 0;
     this.applyAim();
@@ -268,6 +281,7 @@ export class WeaponSystem {
     this.setAiming(false);
     this.rampStacks = 0;
     this.bloom = 0;
+    this.heat = 0;
     this.triggerBuffer = 0;
     this.cooldown = 0;
     this.host.viewmodel.setWeapon(this.activeWeapon, animate);
@@ -329,6 +343,7 @@ export class WeaponSystem {
 
     if (!canAct) {
       this.triggerBuffer = 0;
+      this.heat = 0;
       if (this.cooldown < 0) this.cooldown = 0;
       return;
     }
@@ -352,6 +367,11 @@ export class WeaponSystem {
     const def = slot.def;
     const want = def.auto ? input.mouseIsDown(0) || this.triggerBuffer > 0 : this.triggerBuffer > 0;
     const blocked = this.swapLeft > 0 || this.lockLeft > 0 || this.reloadLeft > 0;
+
+    // Overheat: heat builds while the trigger is held on a gun that can fire, drains otherwise
+    const overheat = hasSkillHook(this.ctx, 'player:overheat');
+    if (overheat && want && !blocked && slot.ammo > 0) this.heat = Math.min(1, this.heat + dt / OVERHEAT.rise);
+    else this.heat = Math.max(0, this.heat - dt / OVERHEAT.drain);
 
     if (!want || blocked || this.cooldown > 0) {
       if (!want && this.cooldown < 0) this.cooldown = 0;
@@ -380,7 +400,8 @@ export class WeaponSystem {
       if (doubleTap && this.ctx.rng() < DOUBLE_TAP_CHANCE) this.shoot(slot, stats, true);
 
       const rampMult = ramp ? 1 + RAMP_PER_STACK * this.rampStacks : 1;
-      const rate = Math.max(0.1, def.fireRate * stats.fireRateMult * rampMult);
+      const heatMult = overheat ? 1 + OVERHEAT.fireRate * this.heat : 1;
+      const rate = Math.max(0.1, def.fireRate * stats.fireRateMult * rampMult * heatMult);
       this.cooldown += 1 / rate;
       shots++;
       if (!def.auto) {
@@ -404,12 +425,15 @@ export class WeaponSystem {
     return ACCURACY.bloom[this.activeWeapon?.archetype ?? 'rifle'] ?? ACCURACY.bloom.rifle;
   }
 
-  /** Effective cone half-angle of the next shot: base × movement × ADS × (1 + bloom). */
+  /** Effective cone half-angle of the next shot: base × movement × ADS × (1 + bloom) × heat. */
   currentSpread(): number {
     const def = this.activeWeapon;
     if (!def) return 0;
-    const ads = lerp(1, adsOf(def).adsSpread, this.aimBlend);
-    return Math.max(0, def.spread) * this.spreadMult() * ads * (1 + this.bloom);
+    // Breath Control (skill extras.adsSpreadMult) tightens the aimed cone only
+    const adsSpread = adsOf(def).adsSpread * skillExtras(this.ctx).adsSpreadMult;
+    const ads = lerp(1, adsSpread, this.aimBlend);
+    const heat = this.heat > 0 ? 1 + OVERHEAT.spread * this.heat : 1;
+    return Math.max(0, def.spread) * this.spreadMult() * ads * (1 + this.bloom) * heat;
   }
 
   private buildTargets(): void {
@@ -499,15 +523,44 @@ export class WeaponSystem {
     let hits = 0;
     let dealt = 0;
     let refunded = false;
+    // Deadeye (Marksman active): every bullet crits while it runs
+    const forceCrit = activeRunning(ctx, 'deadeye');
+    let curves = hasSkillHook(ctx, 'player:ricochetDoctrine') ? DOCTRINE.perShot : 0;
 
     for (let i = 0; i < pellets; i++) {
       const dir = this.coneDir(fwd, spread, this.vDir);
       const hit = this.trace(origin, dir, def.range, null);
+
+      if (!hit.enemy && curves > 0) {
+        // Ricochet Doctrine: a near miss curves into the enemy it passed
+        const bent = this.doctrineTarget(origin, hit.point);
+        if (bent) {
+          curves--;
+          ctx.fx.tracer(muzzle, bent.via, color);
+          ctx.fx.tracer(bent.via, bent.aim, color);
+          const amount = baseDmg * DOCTRINE.factor * (forceCrit ? def.critMultiplier * stats.critMult : 1);
+          const applied = bent.enemy.damage(amount, {
+            point: bent.aim.clone(),
+            element: def.element,
+            crit: forceCrit,
+            sourceId: this.host.id,
+            applyStatus: rollStatus(),
+            cause: 'bullet',
+          });
+          if (applied > 0) {
+            hits++;
+            dealt += applied;
+          } else {
+            ctx.fx.burst(bent.aim, color, 3);
+          }
+          continue;
+        }
+      }
       ctx.fx.tracer(muzzle, hit.point, color);
 
       if (hit.enemy) {
         const enemy = hit.enemy;
-        const crit = enemy.isCritPoint(hit.point);
+        const crit = forceCrit || enemy.isCritPoint(hit.point);
         const amount = crit ? baseDmg * def.critMultiplier * stats.critMult : baseDmg;
         const applied = enemy.damage(amount, {
           point: hit.point.clone(),
@@ -569,6 +622,42 @@ export class WeaponSystem {
     this.host.viewmodel.kick(prof.vmKick * scale, prof.vmRot * scale);
     this.host.viewmodel.flash();
     ctx.fx.shake(prof.shake * scale);
+  }
+
+  /**
+   * Ricochet Doctrine target for a missed ray origin→end: the living enemy whose centre is
+   * closest to the segment (within DOCTRINE.radius, at least minAlong m down the ray), with a
+   * clear line from the closest ray point to it. `via` is that ray point (the tracer bends there).
+   */
+  private doctrineTarget(origin: THREE.Vector3, end: THREE.Vector3): { enemy: Enemy; via: THREE.Vector3; aim: THREE.Vector3 } | null {
+    const enemies = this.ctx.enemies;
+    if (!enemies) return null;
+    const seg = end.clone().sub(origin);
+    const len = seg.length();
+    if (len < 1e-4) return null;
+    seg.multiplyScalar(1 / len);
+    const c = new THREE.Vector3();
+    const rel = new THREE.Vector3();
+    let best: { enemy: Enemy; via: THREE.Vector3; aim: THREE.Vector3; d: number } | null = null;
+    for (const e of enemies.list()) {
+      if (!e.alive) continue;
+      c.copy(e.position);
+      c.y += e.height * 0.5;
+      const t = Math.max(0, Math.min(len, rel.copy(c).sub(origin).dot(seg)));
+      if (t < DOCTRINE.minAlong) continue;
+      const via = origin.clone().addScaledVector(seg, t);
+      const d = via.distanceTo(c);
+      if (d > DOCTRINE.radius + 1e-6 || (best && d >= best.d)) continue;
+      best = { enemy: e, via, aim: c.clone(), d };
+    }
+    if (!best) return null;
+    // line of sight from the bend point (a wall between the ray and the enemy blocks the curve)
+    if (best.d > 0.05) {
+      const dir = best.aim.clone().sub(best.via).normalize();
+      const wall = this.ctx.world.raycast(best.via, dir, best.d);
+      if (wall && wall.distance < best.d - 0.2) return null;
+    }
+    return { enemy: best.enemy, via: best.via, aim: best.aim };
   }
 
   /** Bounce to the nearest other living enemy within range. Returns damage dealt. */

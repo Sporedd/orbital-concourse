@@ -62,7 +62,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
       duration: 1,
       description: 'Dash 6 m along your view. Enemies in the path take 150% melee damage and are knocked back. 1 s invulnerability.',
       hook: 'player:shieldBash',
-      liveEffect: false,
+      liveEffect: true,
     },
   },
   marksman: {
@@ -82,7 +82,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
       duration: 5,
       description: 'For 5 s time slows to 50% for everything but you, and every bullet crits.',
       hook: 'player:deadeye',
-      liveEffect: false,
+      liveEffect: true,
     },
   },
   technician: {

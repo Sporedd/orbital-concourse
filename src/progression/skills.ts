@@ -6,7 +6,8 @@
  *  - `apply()` (and `extra()`) here: static stats, recomputed on every invest;
  *  - effects.ts CONDITIONALS / buffs: PlayerStats modifiers evaluated whenever stats are read;
  *  - effects.ts event listeners: everything triggered by kills, hits, pickups, the crowd…
- * Nodes that need player code carry `hook: 'player:<name>'` and `implemented: false`.
+ * Nodes that need player code carry `hook: 'player:<name>'`; they are live once that hook is in
+ * WIRED_PLAYER_HOOKS (the player code reads it), otherwise `implemented: false` (SOON).
  */
 import type { PlayerStats, SkillNode } from '@/core/types';
 import { CLASSES, CLASS_IDS, PIT, type ClassId, type TreeId } from './classes';
@@ -97,6 +98,19 @@ const fmtNum = (v: number) => {
 
 const LETTER = { a: 'A', b: 'B', c: 'C' } as const;
 
+/** `player:*` hooks the player code implements (docs §5.1). Nodes on any other player hook are SOON. */
+export const WIRED_PLAYER_HOOKS: ReadonlySet<string> = new Set([
+  'player:activeKey', // src/player/index.ts (Q → useActive)
+  'player:secondWind', // src/player/index.ts takeDamage
+  'player:overheat', // src/player/weapons.ts heat
+  'player:ricochetDoctrine', // src/player/weapons.ts doctrineTarget
+  'player:extras', // grenades.ts / shared.ts maxGrenades
+  'player:extras.extraGrenades',
+  'player:extras.grenadeDamageMult',
+  'player:extras.grenadeRadiusMult',
+  'player:extras.adsSpreadMult', // weapons.ts currentSpread
+]);
+
 function make(
   classId: TreeId, slot: 'a' | 'b' | 'c' | 'pit' | 'cap', tier: Tier, col: number, code: string,
   id: string, name: string, kind: NodeKind, maxRank: number, o: NodeOpts,
@@ -105,7 +119,7 @@ function make(
   const sign = o.sign ?? (o.perRank !== undefined ? '+' : '');
   const value = o.value ?? (o.perRank !== undefined ? `${fmtNum(o.perRank)}${unit}` : '');
   const branch = slot === 'pit' ? PIT : `${classId}_${slot}`;
-  const implemented = o.implemented ?? !o.hook.startsWith('player:');
+  const implemented = o.implemented ?? (!o.hook.startsWith('player:') || WIRED_PLAYER_HOOKS.has(o.hook));
   return {
     id, name, branch, classId, tier, col, kind, code, maxRank,
     requires: o.requires,
@@ -298,7 +312,7 @@ const MARKSMAN: SkillDef[] = [
   }),
   bn('marksman', 'b', 2, 1, 'mar_ricochet', 'Ricochet Doctrine', 'keystone', 1, {
     flavour: 'Close counts. You made sure of it.',
-    description: 'Bullets that miss within 2 m of an enemy curve into it.',
+    description: 'Bullets that miss within 2 m of an enemy curve into it for 70% damage (once per shot).',
     value: '2 m', hook: 'player:ricochetDoctrine', requires: 'mar_quickdraw',
   }),
   bn('marksman', 'b', 3, 0, 'mar_specialist', 'Specialist', 'passive', 2, {
@@ -583,7 +597,7 @@ const PIT_NODES: SkillDef[] = [
   }),
   pit(3, 0, 5, 'pit_second_wind', 'Second Wind', 1, {
     flavour: 'Not yet.',
-    description: 'Once per round, lethal damage leaves you at 1 HP with 2 s of invulnerability.',
+    description: 'Once per round, lethal damage leaves you at 1 HP with half a shield and 2 s of invulnerability.',
     value: '2 s', hook: 'player:secondWind', requires: 'pit_pack_mule',
   }),
 ];

@@ -40,6 +40,8 @@ export function createAudio(ctx: GameContext): AudioSystem {
   let music: Music | null = null;
   let wind: Wind | null = null;
   let wantedMusic: MusicState | null = null;
+  /** Boss music intensity 1..3 (boss:phase 0/1/2 → 1/2/3); kept while the engine is not up yet. */
+  let bossPhase = 1;
   const volumes = { ...DEFAULT_VOLUMES };
   const lastPlayed = new Map<SfxName, number>();
 
@@ -79,6 +81,7 @@ export function createAudio(ctx: GameContext): AudioSystem {
     music = new Music(engine);
     wind = new Wind(engine);
     wind.start();
+    music.setBossPhase(bossPhase);
     if (wantedMusic) music.set(wantedMusic);
     return engine;
   }
@@ -194,7 +197,16 @@ export function createAudio(ctx: GameContext): AudioSystem {
     if (p.isBoss) play('boss_die');
     else play('enemy_die', { position: p.position });
   });
-  ev.on('boss:spawned', () => play('boss_roar'));
+  ev.on('boss:spawned', () => {
+    play('boss_roar');
+    bossPhase = 1;
+    music?.setBossPhase(1);
+  });
+  ev.on('boss:phase', (e) => {
+    // bosses start at phase 0 and emit 1 (66 %) and 2 (33 %): music intensity is phase + 1
+    bossPhase = Math.max(1, Math.min(3, Math.round(e.phase) + 1));
+    music?.setBossPhase(bossPhase);
+  });
 
   ev.on('player:damaged', (p) => {
     if (!isLocal(p.playerId) || p.amount <= 0) return;

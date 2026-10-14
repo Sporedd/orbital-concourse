@@ -42,7 +42,8 @@ export interface GameEvents extends StandingEvents {
   'loot:dropped': { item: LootItemState };
   'loot:nearby': { playerId: string; item: LootItemState | null }; // closest pickup-able item (for the prompt)
   'loot:pickup': { playerId: string; item: LootItemState };
-  'loot:expired': { itemId: string };
+  /** `item` (when the sim has it) lets per-peer listeners check ownerId/kind, e.g. salvage. */
+  'loot:expired': { itemId: string; item?: LootItemState };
 
   // progression
   'xp:gained': { playerId: string; amount: number; xp: number; xpToNext: number; level: number };
@@ -68,10 +69,24 @@ export interface GameEvents extends StandingEvents {
   'game:started': Record<string, never>;
   'game:over': { round: number; kills: number };
 
+  // economy (src/gear/economy.ts): scrip wallet of the LOCAL peer
+  'wallet:changed': { scrip: number; delta: number; reason: WalletReason };
+  /** A weapon was turned into scrip (manual [F] or floor expiry). */
+  'loot:salvaged': { playerId: string; itemId: string; weapon: WeaponDef; value: number; manual: boolean };
+
   // ui
   'ui:message': { text: string; duration?: number; style?: 'info' | 'warning' | 'legendary' };
   'ui:screen': { screen: Screen };
+
+  // class active ability (src/progression effects.ts emits used; the local player emits ready)
+  /** The class active fired (Q, or forced by a capstone like Storm Engine). cooldown/duration in s. */
+  'active:used': { playerId: string; abilityId: string; name: string; cooldown: number; duration: number; forced: boolean };
+  /** The class active came off cooldown (or was just unlocked) for the local player. */
+  'active:ready': { playerId: string; abilityId: string; name: string };
 }
+
+/** Why scrip changed (HUD float label, docs/ECONOMY.md). */
+export type WalletReason = 'salvage' | 'expired' | 'bounty' | 'purchase' | 'reroll' | 'upgrade' | 'load' | 'other';
 
 export type EventName = keyof GameEvents;
 export type Handler<K extends EventName> = (payload: GameEvents[K]) => void;

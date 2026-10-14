@@ -9,7 +9,6 @@
  * invest/respec.
  */
 import * as THREE from 'three';
-import { PLAYER } from '@/core/config';
 import { ELEMENT_COLORS, type Element, type Enemy, type GameContext, type LootKind, type PlayerState, type PlayerStats } from '@/core/types';
 import { AMMO_PICKUP, HEALTH_PICKUP } from '@/loot';
 import { HYPE } from '@/standing/hype';
@@ -23,9 +22,10 @@ export const DYN_STATS: readonly DynStat[] = ['damageMult', 'fireRateMult', 'rel
 
 /**
  * Heavy Hands / Executioner: deal the melee bonus as a follow-up hit until the player multiplies
- * melee damage by extras.meleeMult itself (docs §5.2). Set to false when it does.
+ * melee damage by extras.meleeMult itself (docs §5.2). Off: src/player/melee.ts meleeDamage()
+ * reads extras.meleeMult (Executioner's +50 % vs bosses stays a follow-up hit).
  */
-export const MELEE_BRIDGE = true;
+export const MELEE_BRIDGE = false;
 
 export interface EffectHost {
   rank(id: string): number;
@@ -80,9 +80,6 @@ const T = {
   pointBlankRange: 5,
   fanServiceCd: 20,
   sponsorBoost: 0.3,
-  bashDamage: 1.5,
-  bashRadius: 3,
-  deadeyeCrit: 0.5,
   pulseRadius: 8,
   pulseBase: 80,
   pulsePerRound: 20,
@@ -287,18 +284,10 @@ export function createEffects(ctx: GameContext, host: EffectHost): Effects {
     activeReadyAt = t + activeCooldown();
     activeUntil = t + def.duration;
     switch (def.id) {
-      case 'shield_bash': {
-        const fwd = new THREE.Vector3(-Math.sin(p.yaw), 0, -Math.cos(p.yaw));
-        const center = p.position.clone().addScaledVector(fwd, 1.5);
-        center.y += 1;
-        const melee = MELEE_BRIDGE ? host.extras().meleeMult : 1;
-        const dmg = PLAYER.meleeDamage * T.bashDamage * host.stats().damageMult * melee * runDamage();
-        ctx.enemies?.damageRadius(center, T.bashRadius, dmg, { element: 'none', sourceId: p.id, point: center.clone(), cause: 'melee' });
-        ctx.fx?.shake(0.3);
-        break;
-      }
+      // Shield Bash (dash, path hits, knockback, invulnerability) and Deadeye (forced crits,
+      // enemy time scale) are player-side: src/player reacts to active:used and reads `active`.
+      case 'shield_bash':
       case 'deadeye':
-        buff('deadeye', def.duration, { critMult: T.deadeyeCrit });
         break;
       case 'shock_pulse':
         shockPulse();
@@ -310,6 +299,9 @@ export function createEffects(ctx: GameContext, host: EffectHost): Effects {
         break;
     }
     say(def.name.toUpperCase(), 'legendary');
+    ctx.events.emit('active:used', {
+      playerId: p.id, abilityId: def.id, name: def.name, cooldown: activeCooldown(), duration: def.duration, forced: force,
+    });
     return true;
   }
 

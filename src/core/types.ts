@@ -151,6 +151,10 @@ export interface PlayerState {
   reset(): void;
   /** Bring a downed player back in place with a fraction of max health (co-op revives). No-op if alive. */
   revive(healthFraction: number): void;
+  /** Grenade cap incl. gear and skill bonuses (local player; pickups should compare against it). */
+  readonly maxGrenades?: number;
+  /** True while damage is ignored (Shield Bash, Second Wind). Local player only. */
+  readonly invulnerable?: boolean;
 }
 
 export interface PlayerRegistry {
@@ -222,6 +226,12 @@ export interface EnemyRegistry {
   /** Remove everything immediately (new run / cleanup). */
   clear(): void;
   update(dt: number): void;
+  /**
+   * Optional sim time scale for enemies + their projectiles (1 = normal). Deadeye (Marksman
+   * active) sets 0.5 while it runs; EnemyManager scales the dt it is given internally.
+   */
+  setTimeScale?(scale: number): void;
+  readonly timeScale?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +336,8 @@ export interface LootSystem {
   items(): LootItemState[];
   dropLoot(position: THREE.Vector3, opts: DropOpts): LootItemState[];
   generateWeapon(tier: number, rarity?: Rarity): WeaponDef;
-  starterWeapon(): WeaponDef;
+  /** Common level-1 gun; `archetype` = the class starter (classDef.starterArchetype), default pistol. */
+  starterWeapon(archetype?: WeaponArchetype): WeaponDef;
   /** Put one specific item on the ground (default owner: the local player). Emits loot:dropped. */
   dropItem(spec: LootDropSpec): LootItemState;
   /** Remove one item (picked up elsewhere / co-op). Returns true if it existed. No event. */
@@ -386,6 +397,11 @@ export interface RoundManager {
   /** Begin a run at round 1 (resets player, enemies, loot). */
   start(): void;
   update(dt: number): void;
+  /**
+   * Pit stop (phase 'cleared' waits, PLAN §13): start the next intermission. Host only; returns
+   * false when not in the pit stop (or on a co-op client). Optional so fakes/mirrors may omit it.
+   */
+  continue?(): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +431,7 @@ export interface AudioSystem {
 // ---------------------------------------------------------------------------
 // UI
 // ---------------------------------------------------------------------------
-export type Screen = 'none' | 'start' | 'pause' | 'skills' | 'inventory' | 'gameover';
+export type Screen = 'none' | 'start' | 'pause' | 'skills' | 'inventory' | 'gameover' | 'shop';
 
 export interface Hud {
   readonly screen: Screen;
@@ -467,4 +483,6 @@ export interface GameContext {
   gear?: import('@/gear').GearSystem;
   /** Co-op session (role 'offline' in single-player). */
   net?: import('@/net/session').NetSession;
+  /** Scrip wallet, salvage, shop stock and gear upgrades (src/gear/economy.ts, docs/ECONOMY.md). */
+  economy?: import('@/gear/economy').EconomySystem;
 }

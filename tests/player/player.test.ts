@@ -5,6 +5,7 @@ import type { DamageOpts, EnemyRegistry, PlayerStats, WeaponDef, WeaponPerk } fr
 import { EnemyManager } from '@/enemies';
 import { PERKS, generateWeapon, starterWeapon } from '@/loot/weapons';
 import { createPlayer, createPlayerRegistry, type Player } from '@/player';
+import { THROW_RELEASE } from '@/player/animations';
 import { Controller } from '@/player/controller';
 import { Viewmodel } from '@/player/viewmodel';
 import { createRng } from '@/core/rng';
@@ -579,7 +580,11 @@ describe('melee & grenades', () => {
     frames(0.1);
     ctx.fakeInput.press('KeyG');
     frame();
-    expect(player.grenades).toBe(1);
+    expect(player.grenades).toBe(1); // spent at the key press
+    expect(ev.count('player:grenade')).toBe(0); // still winding up (viewmodel releases at THROW_RELEASE)
+    frames(THROW_RELEASE - 0.05);
+    expect(ev.count('player:grenade')).toBe(0);
+    frames(0.1);
     expect(ev.count('player:grenade')).toBe(1);
     frames(2.5);
     expect(radiusCalls).toHaveLength(1);

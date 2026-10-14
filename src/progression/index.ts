@@ -15,7 +15,7 @@ import {
   type SkillDef, type SkillExtras,
 } from './skills';
 
-export { SKILLS, BRANCHES, describeSkill, rankValue, visibleSkills, classSkills, pitSkills, skillById, pointsBudget, TIER_GATE, CAPSTONE_GATE } from './skills';
+export { SKILLS, BRANCHES, describeSkill, rankValue, visibleSkills, classSkills, pitSkills, skillById, pointsBudget, TIER_GATE, CAPSTONE_GATE, WIRED_PLAYER_HOOKS } from './skills';
 export type { SkillDef, SkillExtras, BranchDef, NodeKind, HookKind } from './skills';
 export { CLASSES, CLASS_IDS, CLASS_LIST, PIT, isClassId } from './classes';
 export type { ClassDef, ClassId, ActiveAbilityDef, TreeId } from './classes';

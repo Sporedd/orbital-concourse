@@ -3,6 +3,7 @@
  */
 import { ADS } from '@/core/config';
 import type { GameContext, PlayerStats, WeaponDef } from '@/core/types';
+import type { ClassProgression, SkillExtras } from '@/progression';
 
 export const DEFAULT_STATS: PlayerStats = {
   damageMult: 1,
@@ -47,10 +48,38 @@ export function gearExtras(ctx: GameContext): {
 }
 const NO_GEAR = { meleeMult: 1, shieldRegenMult: 1, elementalResist: 0, elementChanceBonus: 0, hooks: [] as readonly string[] };
 
-/** Max grenades including gear bonuses. */
+/** Max grenades including skill (extras.extraGrenades) and gear bonuses. */
 export function maxGrenades(ctx: GameContext, base: number): number {
+  const b = base + Math.max(0, Math.floor(skillExtras(ctx).extraGrenades || 0));
   const g = (ctx as Partial<GameContext>).gear;
-  return g ? g.maxGrenades(base) : base;
+  return g ? g.maxGrenades(b) : b;
+}
+
+// ---- skill tree (docs/SKILL_TREE.md §5) ---------------------------------------------------
+/** The class progression API, or null (test fakes / before boot). Type-only import: no cycle. */
+export function classProgression(ctx: GameContext): ClassProgression | null {
+  const p = (ctx as Partial<GameContext>).progression as Partial<ClassProgression> | undefined;
+  return p && typeof p.useActive === 'function' ? (p as ClassProgression) : null;
+}
+
+const NO_SKILL_EXTRAS: Readonly<SkillExtras> = Object.freeze({
+  meleeMult: 1, extraGrenades: 0, grenadeDamageMult: 1, grenadeRadiusMult: 1, adsSpreadMult: 1, shieldRegenMult: 1, abilityCooldownMult: 1,
+});
+
+/** Skill-tree extras (neutral without a class progression). Multiply next to gearExtras(). */
+export function skillExtras(ctx: GameContext): Readonly<SkillExtras> {
+  return classProgression(ctx)?.extras ?? NO_SKILL_EXTRAS;
+}
+
+/** The player owns a node wired through `player:<name>` (e.g. 'player:secondWind'). */
+export function hasSkillHook(ctx: GameContext, hook: string): boolean {
+  return classProgression(ctx)?.hooks.includes(hook) ?? false;
+}
+
+/** The class active `abilityId` is running right now (its effect window). */
+export function activeRunning(ctx: GameContext, abilityId: string): boolean {
+  const a = classProgression(ctx)?.activeAbility;
+  return !!a && a.active && a.def.id === abilityId;
 }
 
 export const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
