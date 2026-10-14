@@ -1,0 +1,136 @@
+/**
+ * Boot + game loop. Wires every system through the shared GameContext.
+ * Boot order matters (see types.ts): materials, fx, audio → world → players → enemies → loot →
+ * progression → standing → gear → net session → hud → rounds (+ lobby, rendering pipeline).
+ */
+import * as THREE from 'three';
+import { CAMERA } from './core/config';
+import { EventBus } from './core/events';
+import { Input } from './core/input';
+import { createRng } from './core/rng';
+import { WEAPONS_KEY, localPlayerId, migrateStorage, simPaused } from './core/storage';
+import type { GameContext } from './core/types';
+
+import { createMaterialFactory, createFx, setupRendering } from './rendering';
+import { createWorld } from './world';
+import { createPlayer, createPlayerRegistry } from './player';
+import { createEnemyManager } from './enemies';
+import { createLootSystem } from './loot';
+import { createProgression } from './progression';
+import { createStandingSystem } from './standing';
+import { createGearSystem } from './gear';
+import { createNetSession, mountLobby } from './net';
+import { createRoundManager } from './rounds';
+import { createHud } from './ui';
+import { createAudio } from './audio';
+
+// Must run before any system reads storage (progression, standing, sponsor, gear, weapons).
+migrateStorage();
+
+const canvas = document.getElementById('app') as HTMLCanvasElement;
+const uiRoot = document.getElementById('ui') as HTMLElement;
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(CAMERA.fov, window.innerWidth / window.innerHeight, CAMERA.near, CAMERA.far);
+
+let idCounter = 0;
+const ctx = {
+  scene,
+  camera,
+  renderer,
+  canvas,
+  uiRoot,
+  input: new Input(canvas),
+  events: new EventBus(),
+  time: { delta: 0, elapsed: 0 },
+  rng: createRng(Date.now() & 0xffffffff),
+  isHost: true,
+  nextId: (prefix: string) => `${prefix}_${(++idCounter).toString(36)}`,
+} as GameContext;
+
+// ---- boot -----------------------------------------------------------------
+ctx.materials = createMaterialFactory();
+ctx.fx = createFx(ctx);
+ctx.audio = createAudio(ctx);
+ctx.world = createWorld(ctx);
+ctx.players = createPlayerRegistry();
+// Unique persisted id: co-op uses it as-is (no remapping). Weapons persist like gear.
+const localPlayer = createPlayer(ctx, { id: localPlayerId(), name: 'Challenger', persistKey: WEAPONS_KEY });
+ctx.players.add(localPlayer);
+ctx.player = localPlayer;
+ctx.enemies = createEnemyManager(ctx);
+ctx.loot = createLootSystem(ctx);
+ctx.progression = createProgression(ctx);
+ctx.standing = createStandingSystem(ctx); // standing, crowd hype, sponsor contract (run modifiers)
+ctx.gear = createGearSystem(ctx); // loads the saved inventory ('concourse.gear.v1'); kept across runs
+localPlayer.reset(); // pick up the loaded gear (max health/shield, gloves) before the first run
+// Co-op session (offline until F2 → Host/Join). Created before the HUD so UI widgets can read
+// ctx.net at boot; the session swaps ctx.enemies / ctx.loot / ctx.isHost itself when it joins.
+const net = createNetSession(ctx);
+ctx.net = net;
+ctx.hud = createHud(ctx);
+ctx.rounds = createRoundManager(ctx);
+net.lobby = mountLobby(ctx, net, { hotkey: 'F2' }); // F2 toggles the lobby; UI buttons call ctx.net.lobby.show()
+const pipeline = setupRendering(ctx);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  pipeline.resize(window.innerWidth, window.innerHeight);
+});
+
+// ---- loop -----------------------------------------------------------------
+const clock = new THREE.Clock();
+function frame() {
+  const dt = Math.min(clock.getDelta(), 1 / 20);
+  ctx.time.delta = dt;
+  ctx.time.elapsed += dt;
+
+  ctx.hud.update(dt); // first: decides whether a screen captures input this frame
+  // Single-player: any screen freezes the sim. Co-op: it keeps running for everyone; the open
+  // screen only captures this peer's input (host pause must not freeze the other players).
+  const paused = simPaused(ctx.hud.screen, net.inSession);
+  // Every frame, also while paused, and before the local player (mirrored enemies are positioned
+  // before the local hitscan): snapshots, interpolation, avatars, input ticks.
+  net.update(dt);
+  ctx.world.update(dt);
+  if (!paused) {
+    localPlayer.update(dt);
+    ctx.enemies.update(dt);
+    ctx.loot.update(dt);
+    ctx.rounds.update(dt);
+    ctx.standing?.update(dt); // hype decay / gifts / boos run only while the sim runs
+    ctx.fx.update(dt);
+  }
+  ctx.audio.update(dt);
+  pipeline.update(dt);
+  pipeline.render();
+
+  ctx.input.endFrame();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Dev convenience
+(window as any).game = ctx;
+(window as any).net = net;
+(window as any).lobby = net.lobby;
+{
+  /** Free camera for look-dev: freezes the sim (pause screen) and hides the UI. __ui() restores it. */
+  (window as any).__cam = (x: number, y: number, z: number, tx: number, ty: number, tz: number) => {
+    ctx.hud.showScreen('pause');
+    uiRoot.style.opacity = '0';
+    camera.position.set(x, y, z);
+    camera.lookAt(tx, ty, tz);
+    camera.updateMatrixWorld();
+  };
+  (window as any).__ui = () => { uiRoot.style.opacity = '1'; };
+}

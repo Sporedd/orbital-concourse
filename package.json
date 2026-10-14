@@ -1,0 +1,33 @@
+{
+  "name": "orbital-concourse",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:types": "tsc -p tests --noEmit",
+    "relay": "tsx server/relay.ts",
+    "test:net": "tsx src/net/__smoke__/protocol.smoke.ts && tsx server/relay.test-client.ts && tsx src/net/__smoke__/session.smoke.ts",
+    "test:smoke": "tsx src/standing/smoke.test.ts && tsx src/gear/__tests__/gear.smoke.ts",
+    "test:all": "npm run typecheck && npm run test:types && npm test && npm run test:smoke && npm run test:net"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/three": "^0.180.0",
+    "@types/ws": "^8.18.2",
+    "jsdom": "^26.1.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vitest": "^3.2.7",
+    "ws": "^8.22.0"
+  }
+}
