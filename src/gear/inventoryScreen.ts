@@ -5,10 +5,15 @@
  * Archivo expanded names, no outlines/skew/rounded corners. Mounted inside the `.sb` UI root
  * (uses its tokens); own CSS with the `sbg-` prefix. src/ui mounts it as Screen 'inventory'.
  *
- * Mouse: hover = compare card, LMB backpack = equip, LMB equipped slot = unequip,
- * RMB backpack = drop (only when opts.onDrop is given). Rarity is always shown as a label too.
+ * Mouse: hover = compare card, LMB = select (pins the card and, with an economy, opens the
+ * UPGRADE BAY in place of the totals), double-click backpack = equip, double-click equipped
+ * slot = unequip, RMB backpack = drop (only when opts.onDrop is given). The bay's header also
+ * has EQUIP / UNEQUIP / DROP buttons. Rarity is always shown as a label too.
  */
 import { RARITY_COLORS, type MaterialFactory } from '@/core/types';
+import type { EconomySystem } from './economy';
+import { fmtScrip } from './economyMath';
+import { createUpgradePanel, type UpgradePanel } from './upgradePanel';
 import { AFFIXES, GEAR_SETS, GEAR_STATS, formatAffixValue, gearScore } from './generator';
 import type { Inventory } from './inventory';
 import { createPaperDoll, type PaperDoll } from './paperDoll';
@@ -19,6 +24,10 @@ export interface InventoryScreenOptions {
   onDrop?: (item: GearDef) => void;
   /** Close button clicked. */
   onClose?: () => void;
+  /** Scrip economy: enables the UPGRADE BAY (src/gear/upgradePanel.ts) and the scrip chip. */
+  economy?: EconomySystem | (() => EconomySystem | undefined);
+  /** UI click sound etc. */
+  onUpgrade?: () => void;
 }
 
 export interface InventoryScreen {
@@ -56,6 +65,8 @@ const CSS = `
 .sbg-row .empty{color:var(--dim);letter-spacing:.08em}
 .sbg-row .il{font-weight:700}
 .sbg-row.no{cursor:default}
+.sbg-row.sel,.sbg-cell.sel{box-shadow:inset 4px 0 0 var(--accent);background:#2E3134}
+.sbg-chips2{display:flex;gap:8px}
 .sbg-rar{display:inline-flex;align-items:center;gap:6px;font:400 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--label)}
 .sbg-sq{width:10px;height:10px;display:inline-block;flex:none}
 .sbg-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
@@ -95,6 +106,10 @@ const CSS = `
 `;
 
 let cssInjected = false;
+/** The shared `sbg-` CSS (panels, rows, cells, cards); the shop screen reuses it. */
+export function injectInventoryCss(): void {
+  injectCss();
+}
 function injectCss(): void {
   if (cssInjected || typeof document === 'undefined') return;
   cssInjected = true;
@@ -160,7 +175,11 @@ export function createInventoryScreen(
   const head = el('div', 'sbg-head', root);
   const headL = el('div', '', head, '<div class="sb-tab" style="width:240px;margin-bottom:8px"></div><div class="sbg-label" style="margin:0">QUARTERS · GEAR RACK</div><div class="h">LOADOUT</div>');
   void headL;
-  const scoreChip = el('div', 'sbg-chip', head);
+  const chips = el('div', 'sbg-chips2', head);
+  const scripChip = el('div', 'sbg-chip', chips);
+  scripChip.hidden = true;
+  const scoreChip = el('div', 'sbg-chip', chips);
+  const economy = (): EconomySystem | undefined => (typeof opts.economy === 'function' ? opts.economy() : opts.economy);
 
   // column 1: paper doll + sets
   const col1 = el('div', 'sbg-col', root);
@@ -172,11 +191,16 @@ export function createInventoryScreen(
   // column 2: equipped + totals
   const col2 = el('div', 'sbg-col', root);
   const wornPanel = el('div', 'sbg-panel', col2);
-  el('div', 'sbg-label', wornPanel, '<span>02 · EQUIPPED</span><span>LMB UNEQUIP</span>');
+  el('div', 'sbg-label', wornPanel, '<span>02 · EQUIPPED</span><span>DBL UNEQUIP</span>');
   const slotsEl = el('div', '', wornPanel);
   const totalsPanel = el('div', 'sbg-panel grow', col2);
   el('div', 'sbg-label', totalsPanel, '<span>03 · GEAR TOTALS</span>');
   const totalsEl = el('div', '', totalsPanel);
+  const upgPanel = el('div', 'sbg-panel grow', col2);
+  const upgLabel = el('div', 'sbg-label', upgPanel, '<span>03 · UPGRADE BAY</span>');
+  upgPanel.hidden = true;
+  let upgrade: UpgradePanel | null = null;
+  let selectedId: string | null = null;
 
   // column 3: backpack + compare card
   const col3 = el('div', 'sbg-col', root);
@@ -188,7 +212,7 @@ export function createInventoryScreen(
   card.hidden = true;
 
   const foot = el('div', 'sbg-foot', root,
-    `<span><span class="sbg-key">I</span>CLOSE</span><span><span class="sbg-key">LMB</span>EQUIP / UNEQUIP</span>${opts.onDrop ? '<span><span class="sbg-key">RMB</span>DROP</span>' : ''}`);
+    `<span><span class="sbg-key">I</span>CLOSE</span><span><span class="sbg-key">LMB</span>SELECT / UPGRADE</span><span><span class="sbg-key">DBL</span>EQUIP / UNEQUIP</span>${opts.onDrop ? '<span><span class="sbg-key">RMB</span>DROP</span>' : ''}`);
   const closeBtn = el('button', 'sbg-close', foot, 'CLOSE');
   closeBtn.type = 'button';
   closeBtn.addEventListener('click', () => opts.onClose?.());
@@ -208,7 +232,10 @@ export function createInventoryScreen(
         ? `<span class="k">${GEAR_SLOT_LABEL[slot]}</span><span class="n"><b>${esc(d.name)}</b><span class="sbg-rar"><span class="sbg-sq" style="background:${rarityCss(d)}"></span>${d.rarity}</span></span><span class="il">ILV ${pad2(d.level)}</span>`
         : `<span class="k">${GEAR_SLOT_LABEL[slot]}</span><span class="n empty">— EMPTY —</span><span></span>`;
       if (d) {
-        row.addEventListener('click', () => {
+        row.dataset.id = d.id;
+        if (d.id === selectedId) row.classList.add('sel');
+        row.addEventListener('click', () => select(d.id));
+        row.addEventListener('dblclick', () => {
           if (!inv.unequip(slot)) flash(row);
         });
         row.addEventListener('mouseenter', () => showCard(d.id));
@@ -230,7 +257,10 @@ export function createInventoryScreen(
       cell.innerHTML = `<div class="t"><span>${GEAR_SLOT_LABEL[d.slot]}</span><span class="${cmp.delta > 0 ? 'sbg-up' : 'sbg-down'}">${arrow}</span></div>`
         + `<div class="n">${esc(d.name)}</div><div class="r">${d.rarity} · ${pad2(d.level)}</div>`;
       cell.title = `${d.name} (${d.rarity}, ILV ${d.level})`;
-      cell.addEventListener('click', () => inv.equip(d.id));
+      cell.dataset.id = d.id;
+      if (d.id === selectedId) cell.classList.add('sel');
+      cell.addEventListener('click', () => select(d.id));
+      cell.addEventListener('dblclick', () => inv.equip(d.id));
       cell.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         if (!opts.onDrop) return;
@@ -265,9 +295,46 @@ export function createInventoryScreen(
     setsEl.innerHTML = sets.join('');
   }
 
+  /** LMB: pin a piece (card + upgrade bay). No DOM rebuild, so a double-click still lands. */
+  function select(id: string | null): void {
+    selectedId = id && inv.has(id) ? id : null;
+    for (const n of Array.from(root.querySelectorAll<HTMLElement>('[data-id]'))) n.classList.toggle('sel', n.dataset.id === selectedId);
+    renderUpgrade();
+    showCard(hoverId);
+  }
+
+  function renderUpgrade(): void {
+    const eco = economy();
+    scripChip.hidden = !eco;
+    if (eco) scripChip.textContent = `SCRIP ${fmtScrip(eco.scrip)}`;
+    const on = !!eco && !!selectedId;
+    upgPanel.hidden = !on;
+    totalsPanel.hidden = on;
+    if (!eco) return;
+    if (!upgrade) {
+      upgrade = createUpgradePanel(upgPanel, eco, inv, {
+        actions: (item, where) => {
+          const out = [where === 'backpack'
+            ? { label: 'EQUIP', run: () => { inv.equip(item.id); } }
+            : { label: 'UNEQUIP', run: () => { inv.unequip(item.slot); } }];
+          if (where === 'backpack' && opts.onDrop) {
+            out.push({ label: 'DROP', run: () => { const it = inv.remove(item.id); if (it) opts.onDrop!(it); } });
+          }
+          return out;
+        },
+        onUpgrade: () => opts.onUpgrade?.(),
+        onClear: () => select(null),
+      });
+      void upgLabel;
+    }
+    if (upgrade.target !== selectedId) upgrade.setTarget(selectedId);
+    else upgrade.render();
+  }
+
   function showCard(id: string | null): void {
     hoverId = id;
     for (const c of Array.from(gridEl.children)) c.classList.remove('hov');
+    id = id ?? selectedId;
     const found = id ? inv.find(id) : null;
     if (!found) {
       card.hidden = true;
@@ -285,9 +352,11 @@ export function createInventoryScreen(
   }
 
   function render(): void {
+    if (selectedId && !inv.has(selectedId)) selectedId = null;
     renderSlots();
     renderBag();
     renderTotals();
+    renderUpgrade();
     if (hoverId && !inv.has(hoverId)) hoverId = null;
     showCard(hoverId);
     doll?.setLoadout(inv.loadout);

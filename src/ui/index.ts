@@ -3,10 +3,12 @@
  * menus, pointer-lock aware screen flow.
  *  start ─click→ none ⇄ pause (Esc / lock lost) ; none ⇄ skills (Tab) ; none ⇄ inventory (I, with ctx.gear)
  *  game:over → gameover ─click→ none (retry) / start (main menu)
+ *  pit stop (phase 'cleared'): Enter = continue (host), B ⇄ shop; shop also from the start menu
  * Every screen other than 'none' unlocks the pointer and sets input.uiCaptured (sim pauses).
  */
 import type { GameContext, Hud, Screen } from '@/core/types';
 import { createInventoryScreen, type InventoryScreen } from '@/gear/inventoryScreen';
+import { createShopScreen, type ShopScreen } from '@/gear/shopScreen';
 import { h } from './dom';
 import { createHudWidgets } from './hud';
 import { createRunStats } from './runStats';
@@ -32,7 +34,24 @@ export function createHud(ctx: GameContext): Hud {
     return !!ph && ph !== 'idle' && ph !== 'gameover';
   };
 
-  const widgets = createHudWidgets(ctx, root);
+  const pitStop = () => ctx.rounds?.state.phase === 'cleared';
+  /** Pit stop → next round (host / single-player; a co-op client waits for the host). */
+  const continueRun = () => {
+    if (!pitStop() || (ctx.net?.inSession && !ctx.isHost)) return;
+    if (ctx.rounds.continue?.()) {
+      ctx.audio.play('ui_click');
+      if (screen !== 'none') enterPlay();
+    }
+  };
+  /** The shop opens from the pit stop and the menus, never mid-fight. */
+  const shopAllowed = () => !!ctx.economy && !!ctx.gear && (!playing() || pitStop());
+
+  const widgets = createHudWidgets(ctx, root, {
+    continue: continueRun,
+    shop: () => openOverlay('shop'),
+    loadout: () => openOverlay('inventory'),
+    skills: () => openOverlay('skills'),
+  });
   const run = createRunStats(ctx);
 
   const enterPlay = () => {
@@ -48,6 +67,8 @@ export function createHud(ctx: GameContext): Hud {
     const canDrop = typeof ctx.loot?.dropItem === 'function';
     inventory = createInventoryScreen(root, ctx.gear, ctx.materials, {
       onClose: () => closeOverlay(),
+      economy: () => ctx.economy,
+      onUpgrade: () => ctx.audio.play('skill_up'),
       onDrop: canDrop
         ? (item) => {
           const p = ctx.player;
@@ -59,6 +80,21 @@ export function createHud(ctx: GameContext): Hud {
         : undefined,
     });
     return inventory;
+  };
+
+  // ---- shop (key B / menus), created on first use --------------------------------------------
+  let shop: ShopScreen | null = null;
+  const getShop = (): ShopScreen | null => {
+    if (shop || !ctx.gear || !ctx.economy) return shop;
+    shop = createShopScreen(root, ctx.gear, ctx.economy, {
+      onClose: () => closeOverlay(),
+      onAction: (what) => ctx.audio.play(what === 'fail' ? 'empty' : what === 'upgrade' ? 'skill_up' : 'pickup'),
+      context: () => {
+        const rs = ctx.rounds?.state;
+        return rs && rs.phase === 'cleared' ? `PIT STOP · ROUND ${String(rs.round).padStart(2, '0')} CLEARED · VENDOR DECK` : 'QUARTERS · VENDOR DECK';
+      },
+    });
+    return shop;
   };
 
   const screens = createScreens(ctx, root, {
@@ -86,27 +122,34 @@ export function createHud(ctx: GameContext): Hud {
     onCloseSkills: () => closeOverlay(),
     onOpenSkills: () => openOverlay('skills'),
     onOpenInventory: () => openOverlay('inventory'),
+    onOpenShop: () => openOverlay('shop'),
+    onContinue: continueRun,
   }, run);
 
   function showScreen(s: Screen): void {
     if (s === screen) return;
     if (s === 'inventory' && !getInventory()) return;
+    if (s === 'shop' && !getShop()) return;
     screen = s;
     screens.show(s);
     if (s === 'inventory') inventory!.show();
     else inventory?.hide();
-    widgets.setVisible(s !== 'start' && s !== 'gameover' && s !== 'inventory');
+    if (s === 'shop') shop!.show();
+    else shop?.hide();
+    widgets.setVisible(s !== 'start' && s !== 'gameover' && s !== 'inventory' && s !== 'shop');
     if (s !== 'none') {
       ctx.input.unlock();
-      if (s === 'skills' || s === 'pause' || s === 'inventory') ctx.audio.play('ui_open');
+      if (s === 'skills' || s === 'pause' || s === 'inventory' || s === 'shop') ctx.audio.play('ui_open');
     }
     ctx.input.uiCaptured = s !== 'none';
     ctx.events.emit('ui:screen', { screen: s });
   }
 
-  /** Skills / inventory: remember the screen they were opened from. */
-  function openOverlay(s: 'skills' | 'inventory'): void {
-    if (screen !== 'skills' && screen !== 'inventory') overlayReturn = screen;
+  /** Skills / inventory / shop: remember the screen they were opened from. */
+  const isOverlay = (s: Screen) => s === 'skills' || s === 'inventory' || s === 'shop';
+  function openOverlay(s: 'skills' | 'inventory' | 'shop'): void {
+    if (s === 'shop' && !shopAllowed()) return;
+    if (!isOverlay(screen)) overlayReturn = screen;
     showScreen(s);
   }
 
@@ -148,7 +191,7 @@ export function createHud(ctx: GameContext): Hud {
       gameOverIn -= dt;
       if (gameOverIn <= 0) {
         gameOverIn = -1;
-        if (screen === 'skills' || screen === 'inventory') overlayReturn = 'gameover';
+        if (isOverlay(screen)) overlayReturn = 'gameover';
         else showScreen('gameover');
       }
     }
@@ -157,16 +200,29 @@ export function createHud(ctx: GameContext): Hud {
     const tab = input.rawJustPressed('Tab');
     const invKey = input.rawJustPressed('KeyI');
     const escKey = input.rawJustPressed('Escape');
+    const shopKey = input.rawJustPressed('KeyB');
+    const enterKey = input.rawJustPressed('Enter') || input.rawJustPressed('NumpadEnter');
+    const base = screen === 'none' || screen === 'pause' || screen === 'start' || screen === 'gameover';
     if (screen === 'skills') {
       if (tab || escKey) closeOverlay();
       else if (invKey && ctx.gear) showScreen('inventory');
+      else if (shopKey && shopAllowed()) showScreen('shop');
     } else if (screen === 'inventory') {
       if (invKey || escKey) closeOverlay();
       else if (tab) showScreen('skills');
+      else if (shopKey && shopAllowed()) showScreen('shop');
+    } else if (screen === 'shop') {
+      if (shopKey || escKey) closeOverlay();
+      else if (tab) showScreen('skills');
+      else if (invKey) showScreen('inventory');
     } else if (tab) {
-      if (screen === 'none' || screen === 'pause' || screen === 'start' || screen === 'gameover') openOverlay('skills');
+      if (base) openOverlay('skills');
     } else if (invKey && ctx.gear) {
-      if (screen === 'none' || screen === 'pause' || screen === 'start' || screen === 'gameover') openOverlay('inventory');
+      if (base) openOverlay('inventory');
+    } else if (shopKey && base) {
+      openOverlay('shop');
+    } else if (enterKey && (screen === 'none' || screen === 'pause') && pitStop()) {
+      continueRun();
     } else if (escKey && screen === 'none' && playing()) {
       showScreen('pause');
     }
@@ -183,6 +239,7 @@ export function createHud(ctx: GameContext): Hud {
     run.update(dt, screen === 'none' && playing());
     widgets.update(dt);
     inventory?.update(dt);
+    shop?.update(dt);
     if (screen !== 'none') screens.syncSound();
   }
 

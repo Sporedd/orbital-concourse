@@ -89,7 +89,7 @@ describe('sponsor contracts through the real hooks', () => {
     const shower = ev.of('loot:dropped').filter((d) => d.item.ownerId === player.id);
     expect(shower.length).toBeGreaterThanOrEqual(LOOT.bossDrops.min * 2);
     expect(shower.length).toBeLessThanOrEqual(LOOT.bossDrops.max * 2);
-    expect(shower.some((d) => d.item.kind === 'gear')).toBe(true);
+    expect(shower.some((d) => d.item.kind === 'gear')).toBe(false); // gear is shop-only (PLAN §13)
     expect(shower.some((d) => d.item.kind === 'weapon')).toBe(true);
   });
 

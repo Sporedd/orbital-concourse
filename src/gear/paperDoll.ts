@@ -9,7 +9,10 @@ import * as THREE from 'three';
 import type { MaterialFactory } from '@/core/types';
 import { buildGearModel, gearGeometry, type GearModel } from './models';
 import { GEAR_PALETTE, GEAR_TOON_HATCH } from './palette';
-import { GEAR_SLOTS, type GearSlot, type Loadout } from './types';
+import { GEAR_SLOTS, type GearDef, type GearSlot, type Loadout } from './types';
+
+/** Identity of a piece's model: id + the fields upgrades change (level, rarity, affixes). */
+export const dollKey = (d: GearDef) => `${d.id}|${d.level}|${d.rarity}|${d.affixes.length}`;
 
 export interface PaperDollOptions {
   /** Spin on its own (default true). */
@@ -141,11 +144,12 @@ export function createPaperDoll(canvas: HTMLCanvasElement, materials: MaterialFa
     for (const slot of GEAR_SLOTS) {
       const def = loadout[slot];
       const cur = models.get(slot);
-      if (cur && def && cur.id === def.id) continue;
+      // key, not just id: an upgraded piece keeps its id but its level/rarity reshape the model
+      if (cur && def && cur.id === dollKey(def)) continue;
       detach(slot);
       if (!def || def.slot !== slot) continue;
       const model = buildGearModel(def, materials);
-      models.set(slot, { model, id: def.id, attached: attach(slot, model) });
+      models.set(slot, { model, id: dollKey(def), attached: attach(slot, model) });
     }
     const boots = models.get('boots');
     soleLift = boots && boots.model.params.slot === 'boots' ? boots.model.params.soleThickness : 0;

@@ -1,7 +1,7 @@
 /**
  * Boot + game loop. Wires every system through the shared GameContext.
  * Boot order matters (see types.ts): materials, fx, audio → world → players → enemies → loot →
- * progression → standing → gear → net session → hud → rounds (+ lobby, rendering pipeline).
+ * progression → standing → gear → economy → net session → hud → rounds (+ lobby, rendering pipeline).
  */
 import * as THREE from 'three';
 import { CAMERA } from './core/config';
@@ -19,6 +19,7 @@ import { createLootSystem } from './loot';
 import { createProgression } from './progression';
 import { createStandingSystem } from './standing';
 import { createGearSystem } from './gear';
+import { createEconomy } from './gear/economy';
 import { createNetSession, mountLobby } from './net';
 import { createRoundManager } from './rounds';
 import { createHud } from './ui';
@@ -70,6 +71,8 @@ ctx.loot = createLootSystem(ctx);
 ctx.progression = createProgression(ctx);
 ctx.standing = createStandingSystem(ctx); // standing, crowd hype, sponsor contract (run modifiers)
 ctx.gear = createGearSystem(ctx); // loads the saved inventory ('concourse.gear.v1'); kept across runs
+// Scrip wallet ('concourse.wallet.v1'), salvage, round bounty, shop stock + gear upgrades.
+ctx.economy = createEconomy(ctx, ctx.gear);
 localPlayer.reset(); // pick up the loaded gear (max health/shield, gloves) before the first run
 // Co-op session (offline until F2 → Host/Join). Created before the HUD so UI widgets can read
 // ctx.net at boot; the session swaps ctx.enemies / ctx.loot / ctx.isHost itself when it joins.
@@ -95,9 +98,9 @@ const onRaf = () => {
   lastRafAt = performance.now();
   frame();
 };
-function frame() {
+function frame(forceDt?: number) {
   rafId = 0;
-  const dt = Math.min(clock.getDelta(), 1 / 20);
+  const dt = forceDt ?? Math.min(clock.getDelta(), 1 / 20);
   ctx.time.delta = dt;
   ctx.time.elapsed += dt;
 
@@ -113,6 +116,7 @@ function frame() {
     localPlayer.update(dt);
     ctx.enemies.update(dt);
     ctx.loot.update(dt);
+    ctx.economy?.update(dt); // [F] salvage on the weapon prompt (after loot set the nearby item)
     ctx.rounds.update(dt);
     ctx.standing?.update(dt); // hype decay / gifts / boos run only while the sim runs
     ctx.fx.update(dt);
@@ -144,6 +148,16 @@ setInterval(() => {
 (window as any).game = ctx;
 (window as any).net = net;
 (window as any).lobby = net.lobby;
+/**
+ * Step the loop by hand: __step(frames, dt). For a hidden browser pane (rAF throttled to ~1 Hz)
+ * and scripted play-throughs. Keeps exactly one rAF pending.
+ */
+(window as any).__step = (frames = 1, dt = 1 / 30) => {
+  for (let i = 0; i < frames; i++) {
+    if (rafId) cancelAnimationFrame(rafId);
+    frame(Math.min(dt, 1 / 20));
+  }
+};
 {
   /** Free camera for look-dev: freezes the sim (pause screen) and hides the UI. __ui() restores it. */
   (window as any).__cam = (x: number, y: number, z: number, tx: number, ty: number, tz: number) => {

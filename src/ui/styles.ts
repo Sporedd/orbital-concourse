@@ -199,7 +199,7 @@ const CSS = /* css */ `
 .sb-prompt .what .nm { overflow: hidden; text-overflow: ellipsis; }
 .sb-prompt .rar { font-family: var(--mono); font-stretch: 100%; font-weight: 400; font-size: 12px; letter-spacing: .12em; color: var(--label); margin-left: 12px; flex: none; }
 /* card sits in the right column between the hype panel and the ammo panel */
-.sb-cardslot { position: absolute; right: 32px; bottom: 184px; max-height: calc(100vh - 184px - 200px); display: flex; flex-direction: column; justify-content: flex-end; }
+.sb-cardslot { position: absolute; right: 32px; bottom: 216px; max-height: calc(100vh - 216px - 168px); display: flex; flex-direction: column; justify-content: flex-end; }
 
 .sb-card { width: 352px; background: var(--panel); max-height: 100%; overflow: hidden; }
 .sb-card .band { display: flex; justify-content: space-between; padding: 4px 12px; color: var(--panel-solid); font-family: var(--mono); font-weight: 700; font-size: 12px; letter-spacing: .12em; }
@@ -479,9 +479,41 @@ const CSS = /* css */ `
 .sb-ccard .cta { margin-top: auto; padding-top: 12px; display: flex; align-items: center; font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 @media (max-height: 800px) { .sb-cp-in { padding: 24px 32px; gap: 16px; } .sb-ccard .cb { margin: 6px 0; } }
 
+/* class active chip (Q) above the vitals panel, right side */
+.sb-qchip { position: absolute; right: 0; top: -48px; height: 32px; display: flex; align-items: center; padding: 0 12px 0 4px; background: var(--panel); border-top: 2px solid var(--bone); font-family: var(--mono); font-weight: 700; font-size: 12px; letter-spacing: .12em; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.sb-qchip .sb-key { margin: 0 8px 0 0; min-width: 20px; height: 20px; }
+.sb-qchip.cd { color: var(--label); }
+.sb-qchip.ready { background: var(--bone); color: var(--panel-solid); }
+.sb-qchip.ready .sb-key { border-color: var(--panel-solid); color: var(--panel-solid); }
+.sb-qchip.on { background: var(--accent); color: var(--panel-solid); border-top-color: var(--accent); }
+.sb-qchip.on .sb-key { border-color: var(--panel-solid); color: var(--panel-solid); }
+
+/* economy (PLAN §13): scrip row + gain tags (ammo panel), salvage keycap, pit stop band */
+.sb-scrip { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule); }
+.sb-scripfloats { position: absolute; right: 16px; top: -8px; width: 0; height: 0; }
+.sb-scripfloat { position: absolute; right: 0; bottom: 0; display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; background: var(--bone); color: var(--panel-solid); font-family: var(--mono); font-weight: 700; font-size: 14px; line-height: 1; white-space: nowrap; animation: sb-rise .9s linear forwards; }
+.sb-scripfloat span { font-size: 12px; letter-spacing: .12em; }
+.sb-prompt .sb-key.salv { margin-left: 16px; }
+.sb-pit { position: absolute; top: 32px; left: 50%; width: min(720px, calc(100vw - 2 * 344px)); transform: translateX(-50%); pointer-events: auto; animation: sb-in-top .18s ease-out; }
+.sb-pit .sb-tab { height: 8px; }
+.sb-pit .band { background: var(--panel-solid); padding: 12px 16px; }
+.sb-pit .hd { display: flex; align-items: baseline; gap: 16px; min-width: 0; }
+.sb-pit .big { font-family: var(--stencil); font-size: 32px; line-height: 1; color: var(--accent); flex: none; }
+.sb-pit .l { font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-pit .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.sb-pit button { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; min-height: 32px; padding: 4px 12px 4px 4px; background: var(--panel); border-top: 2px solid var(--bone); color: var(--bone); }
+.sb-pit button .sb-key { margin: 0 8px 0 0; }
+.sb-pit button:hover { background: var(--bone); color: var(--panel-solid); }
+.sb-pit button:hover .sb-key { border-color: var(--panel-solid); color: var(--panel-solid); }
+.sb-pit button.go { background: var(--accent); color: var(--panel-solid); border-top-color: var(--accent); }
+.sb-pit button.go .sb-key { border-color: var(--panel-solid); color: var(--panel-solid); }
+.sb-pit .wait { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 12px; background: var(--track); font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: .12em; }
+.sb-pit .wait::after { content: ' ■'; margin-left: 6px; animation: sb-blink 1s steps(1) infinite; }
+@keyframes sb-rise { from { transform: translateY(0); } to { transform: translateY(-24px); } }
+
 /* animations: linear, no bounce */
 @keyframes sb-blink { 50% { opacity: 0; } }
 @keyframes sb-pip { 50% { opacity: 0; } }
 @keyframes sb-in-top { from { transform: translateX(-50%) translateY(-12px); opacity: 0; } to { transform: translateX(-50%); opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .sb-vitals.low .lowtab, .sb-lowedge.on, .sb-level.in .burst i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .sb-vitals.low .lowtab, .sb-lowedge.on, .sb-level.in .burst i, .sb-scripfloat, .sb-pit .wait::after { animation: none; } }
 `;

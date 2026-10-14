@@ -250,12 +250,19 @@ export function generateWeapon(rng: Rng, nextId: (p: string) => string, tier: nu
   };
 }
 
-export function starterWeapon(nextId: (p: string) => string): WeaponDef {
-  const b = ARCHETYPES.pistol;
+/** Starter gun names per archetype (class starters, docs/SKILL_TREE.md §2). */
+export const STARTER_NAMES: Record<WeaponArchetype, string> = {
+  pistol: 'Rusty Iron', smg: 'Rusty Chatterbox', shotgun: 'Rusty Doorkicker', rifle: 'Rusty Trooper', sniper: 'Rusty Needle',
+};
+
+/** Common level-1 gun with the archetype's base stats (no rolls); default pistol. */
+export function starterWeapon(nextId: (p: string) => string, archetype: WeaponArchetype = 'pistol'): WeaponDef {
+  if (!ARCHETYPES[archetype]) archetype = 'pistol';
+  const b = ARCHETYPES[archetype];
   return {
     id: nextId('w'),
-    name: 'Rusty Iron',
-    archetype: 'pistol',
+    name: STARTER_NAMES[archetype],
+    archetype,
     rarity: 'common',
     element: 'none',
     level: 1,

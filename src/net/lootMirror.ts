@@ -201,7 +201,7 @@ export class LootMirror implements LootSystem {
           if (p.health < p.maxHealth) this.take(it);
           break;
         case 'grenade':
-          if (p.grenades < (this.ctx.gear ? this.ctx.gear.maxGrenades(PLAYER.maxGrenades) : PLAYER.maxGrenades)) this.take(it);
+          if (p.grenades < (p.maxGrenades ?? (this.ctx.gear ? this.ctx.gear.maxGrenades(PLAYER.maxGrenades) : PLAYER.maxGrenades))) this.take(it);
           break;
         case 'gear':
           if (it.gear && this.ctx.gear?.canPickUp(it.gear as GearDef)) this.take(it);

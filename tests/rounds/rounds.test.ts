@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { INTERMISSION_SECONDS, SUB_WAVES, maxAliveForRound, mobsForRound } from '@/core/config';
 import type {
-  BossKind, DropOpts, Enemy, EnemyRegistry, LootDropSpec, LootItemState, LootSystem, MobKind, RoundManager, WeaponDef,
+  BossKind, DropOpts, Enemy, EnemyRegistry, LootDropSpec, LootItemState, LootSystem, MobKind, Progression, RoundManager, WeaponArchetype, WeaponDef,
 } from '@/core/types';
 import { starterWeapon } from '@/loot/weapons';
 import { createPlayerRegistry } from '@/player';
@@ -14,7 +14,7 @@ import {
 // ---------------------------------------------------------------------------
 // Controllable fakes
 // ---------------------------------------------------------------------------
-interface FE extends Enemy { alive: boolean }
+interface FE extends Enemy { alive: boolean; hits: number }
 
 class FakeEnemies implements EnemyRegistry {
   all: FE[] = [];
@@ -28,13 +28,18 @@ class FakeEnemies implements EnemyRegistry {
   private make(kind: MobKind | BossKind, isBoss: boolean, position: THREE.Vector3, tier: number): FE {
     const id = `${isBoss ? 'boss' : 'mob'}${++this.n}`;
     const e: FE = {
-      id, isBoss, alive: true, object: new THREE.Group(), position: position.clone(), radius: 0.5, height: 2,
+      id, isBoss, alive: true, hits: 0, object: new THREE.Group(), position: position.clone(), radius: 0.5, height: 2,
       state: {
         id, kind, isBoss, tier, position: position.clone(), yaw: 0, health: 10, maxHealth: 10, alive: true,
         phase: 0, anim: 'idle', statuses: [],
       },
       isCritPoint: () => false,
-      damage: () => 0,
+      // lethal hits kill (no killer: the pit stop's leftover sweep)
+      damage: (amount: number) => {
+        e.hits++;
+        if (amount >= 1e6 && e.alive) this.kill(e, true, undefined);
+        return amount;
+      },
       applyStatus: () => {},
     };
     this.all.push(e);
@@ -60,12 +65,12 @@ class FakeEnemies implements EnemyRegistry {
   update() {}
   aliveMobs() { return this.all.filter((e) => e.alive && !e.isBoss); }
 
-  kill(e: FE, emit = true): void {
+  kill(e: FE, emit = true, killerId: string | undefined = 'p1'): void {
     e.alive = false;
     e.state.alive = false;
     if (emit) {
       this.ctx.events.emit('enemy:killed', {
-        enemy: e, position: e.position.clone(), isBoss: e.isBoss, tier: e.state.tier, killerId: 'p1',
+        enemy: e, position: e.position.clone(), isBoss: e.isBoss, tier: e.state.tier, killerId,
       });
     }
   }
@@ -83,7 +88,11 @@ class FakeLoot implements LootSystem {
   items(): LootItemState[] { return []; }
   dropLoot(position: THREE.Vector3, opts: DropOpts) { this.drops.push({ position: position.clone(), opts }); return []; }
   generateWeapon(): WeaponDef { return starterWeapon(() => `w${++this.n}`); }
-  starterWeapon(): WeaponDef { return starterWeapon(() => `starter${++this.n}`); }
+  starterArchetypes: (WeaponArchetype | undefined)[] = [];
+  starterWeapon(archetype?: WeaponArchetype): WeaponDef {
+    this.starterArchetypes.push(archetype);
+    return starterWeapon(() => `starter${++this.n}`, archetype);
+  }
   dropItem(spec: LootDropSpec): LootItemState { return { ...spec, id: `drop${++this.n}`, ownerId: spec.ownerId ?? 'p1', age: 0 }; }
   remove() { return false; }
   clear() { this.clears++; }
@@ -157,6 +166,18 @@ describe('RoundManager.start', () => {
     expect(player.weapons[0]!.name).toBe('Rusty Iron');
     rounds.start();
     expect(callsOf(player, 'equip')).toHaveLength(1);
+  });
+
+  it('the starter is the class starter archetype (classDef.starterArchetype), pistol without a class', () => {
+    rounds.start();
+    expect(loot.starterArchetypes).toEqual([undefined]);
+    setup();
+    ctx.progression = { classDef: { starterArchetype: 'shotgun' } } as unknown as Progression;
+    rounds.start();
+    expect(loot.starterArchetypes).toEqual(['shotgun']);
+    expect(player.weapons[0]!.archetype).toBe('shotgun');
+    expect(player.weapons[0]!.name).toBe('Rusty Doorkicker');
+    expect(player.weapons[0]!.rarity).toBe('common');
   });
 
   it('does nothing on a non-host peer', () => {
@@ -284,7 +305,7 @@ describe('RoundManager boss / cleared', () => {
     expect(ev.of('round:boss')[0]).toEqual({ round: 1, bossKind: 'brute' });
   });
 
-  it('boss death → cleared with a boss loot shower (guaranteed weapon, rarityBoost, 3..5 items)', () => {
+  it('boss death → cleared with a boss loot shower (guaranteed weapon only, rarityBoost, 3..5 items)', () => {
     toBoss();
     const boss = enemies.all.find((e) => e.isBoss)!;
     boss.position.set(3, 0, -12);
@@ -295,7 +316,7 @@ describe('RoundManager boss / cleared', () => {
     const bossDrops = loot.drops.filter((d) => d.opts.rarityBoost);
     expect(bossDrops).toHaveLength(1);
     const d = bossDrops[0];
-    expect(d.opts.guaranteed).toEqual(['weapon', 'gear']); // bosses guarantee a weapon AND a gear piece
+    expect(d.opts.guaranteed).toEqual(['weapon']); // gear is bought in the shop now (PLAN §13)
     expect(d.opts.rarityBoost).toBe(0.5);
     expect(d.opts.tier).toBe(1);
     expect(d.opts.count).toBeGreaterThanOrEqual(3);
@@ -320,11 +341,52 @@ describe('RoundManager boss / cleared', () => {
     expect(rounds.state.phase).toBe('boss');
   });
 
-  it('cleared → next round intermission; round 2 is bigger and gets the next boss', () => {
+  it('pit stop: cleared never times out; continue() starts the next intermission', () => {
+    toBoss();
+    expect(rounds.continue!()).toBe(false); // not in the pit stop yet
+    enemies.kill(enemies.all.find((e) => e.isBoss)!);
+    rounds.update(0.1);
+    run(120);
+    expect(rounds.state.phase).toBe('cleared');
+    expect(rounds.state.round).toBe(1);
+    expect(ev.count('round:intermission')).toBe(1);
+    expect(rounds.continue!()).toBe(true);
+    expect(rounds.state.phase).toBe('intermission');
+    expect(rounds.state.round).toBe(2);
+    expect(ev.of('round:intermission').at(-1)).toEqual({ round: 2, seconds: INTERMISSION_SECONDS });
+    expect(rounds.continue!()).toBe(false);
+  });
+
+  it('pit stop: only the host continues', () => {
+    toBoss();
+    enemies.kill(enemies.all.find((e) => e.isBoss)!);
+    rounds.update(0.1);
+    ctx.isHost = false;
+    expect(rounds.continue!()).toBe(false);
+    expect(rounds.state.phase).toBe('cleared');
+  });
+
+  it('pit stop: leftover minions are killed when it starts (no killer, so no drops)', () => {
+    toBoss();
+    const add = enemies.spawnMob('grunt', new THREE.Vector3(), 1);
+    const dropsBefore = loot.drops.length;
+    enemies.kill(enemies.all.find((e) => e.isBoss)!);
+    rounds.update(0.1);
+    expect(rounds.state.phase).toBe('cleared');
+    expect(add.alive).toBe(false);
+    expect(add.hits).toBe(1);
+    expect(enemies.aliveMobs()).toHaveLength(0);
+    // only the boss shower was dropped
+    expect(loot.drops.length - dropsBefore).toBe(1);
+  });
+
+  it('cleared → continue → next round intermission; round 2 is bigger and gets the next boss', () => {
     toBoss();
     enemies.kill(enemies.all.find((e) => e.isBoss)!);
     rounds.update(0.1);
     run(8.1);
+    expect(rounds.state.phase).toBe('cleared');
+    rounds.continue!();
     expect(rounds.state.phase).toBe('intermission');
     expect(rounds.state.round).toBe(2);
     expect(rounds.state.kills).toBe(0);

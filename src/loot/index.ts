@@ -1,6 +1,10 @@
 /**
- * System D — loot: weapon + gear generation, drop tables, per-player loot instancing,
+ * System D — loot: weapon generation, drop tables, per-player loot instancing,
  * pickups (auto for consumables and gear, [E] for weapons) and the loot view.
+ * Gear is meta progression (shop + upgrades, PLAN §13): no table rolls 'gear' any more, but
+ * dropItem() still places existing pieces (backpack drops, co-op) and they are walk-over pickups.
+ * Weapons do not age while the round sits in the pit stop (phase 'cleared'); an expiring
+ * weapon is salvaged into scrip by src/gear/economy.ts (loot:expired carries the item).
  *
  * Run modifiers (system I): every drop's rarity boost gets sponsor + crowd + league added
  * (ctx.standing.dropBoost); the sponsor can force an element on weapons and turn grenade
@@ -14,6 +18,7 @@ import {
 import { randRange } from '@/core/rng';
 import { generateGear } from '@/gear/generator';
 import { generateWeapon as genWeapon, starterWeapon as makeStarter } from './weapons';
+import type { WeaponArchetype } from '@/core/types';
 import { createLootView } from './view';
 
 export { weaponDps, weaponAccuracy, ARCHETYPE_LABEL, PERKS } from './weapons';
@@ -21,7 +26,7 @@ export { weaponDps, weaponAccuracy, ARCHETYPE_LABEL, PERKS } from './weapons';
 export const HEALTH_PICKUP = 35;
 export const AMMO_PICKUP = 0.5;
 /** Weights for random (non-guaranteed) drop kinds. */
-const KIND_WEIGHTS: [LootKind, number][] = [['weapon', 0.3], ['ammo', 0.36], ['health', 0.2], ['grenade', 0.14], ['gear', 0.1]];
+const KIND_WEIGHTS: [LootKind, number][] = [['weapon', 0.3], ['ammo', 0.36], ['health', 0.2], ['grenade', 0.14]];
 
 export function createLootSystem(ctx: GameContext): LootSystem {
   const list: LootItemState[] = [];
@@ -141,15 +146,16 @@ export function createLootSystem(ctx: GameContext): LootSystem {
   }
 
   function update(dt: number): void {
-    // Age + expiry (sim)
-    for (let i = list.length - 1; i >= 0; i--) {
+    // Age + expiry (sim). The pit stop (phase 'cleared') freezes the clock: loot stays put.
+    const aging = ctx.rounds?.state.phase !== 'cleared';
+    for (let i = list.length - 1; i >= 0 && aging; i--) {
       const it = list[i];
       it.age += dt;
       if (it.age >= LOOT.lifetime) {
         list.splice(i, 1);
         view.remove(it.id);
         if (it.id === nearbyId) setNearby(null);
-        ctx.events.emit('loot:expired', { itemId: it.id });
+        ctx.events.emit('loot:expired', { itemId: it.id, item: it });
       }
     }
 
@@ -188,7 +194,8 @@ export function createLootSystem(ctx: GameContext): LootSystem {
           }
           break;
         case 'grenade':
-          if (p.grenades < (ctx.gear ? ctx.gear.maxGrenades(PLAYER.maxGrenades) : PLAYER.maxGrenades)) {
+          // player cap includes gear + skill slots (Bandolier / Ordnance Bay)
+          if (p.grenades < (p.maxGrenades ?? (ctx.gear ? ctx.gear.maxGrenades(PLAYER.maxGrenades) : PLAYER.maxGrenades))) {
             p.addGrenades(1);
             pickup(it);
           }
@@ -240,7 +247,7 @@ export function createLootSystem(ctx: GameContext): LootSystem {
     items: () => list,
     dropLoot,
     generateWeapon: (tier: number, rarity?: Rarity): WeaponDef => genWeapon(ctx.rng, ctx.nextId, tier, { rarity }),
-    starterWeapon: () => makeStarter(ctx.nextId),
+    starterWeapon: (archetype?: WeaponArchetype) => makeStarter(ctx.nextId, archetype),
     dropItem,
     remove: removeItem,
     clear,

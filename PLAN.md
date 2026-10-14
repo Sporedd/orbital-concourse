@@ -155,3 +155,12 @@ Loot should *look* like progress. Every item has an **item level** (`level` = ro
 - **Pace:** fast arcade — high move speed, aggressive mobs, quick time-to-kill.
 - **Round length:** medium — `20 + 8·N` mobs in 3 sub-waves, then the boss (3–5 min per round).
 - **Multiplayer:** architected for 2–4 player PvE co-op now; single-player ships first, co-op is milestone 2.
+
+## 13. Requirements added 2026-10-15
+
+- **Gear is meta progression, not loot.** Helm/chest/boots/gloves/trinket no longer drop. They are bought in a **shop** (between rounds and from the hub/start menu) and improved through an **upgrade system** (spend cash to raise item level / reroll or add affixes; cost scales with rarity and level). Bosses may still drop *weapons*; weapon drops stay as they are.
+- **Cash ("scrip").** Weapons that despawn (expire on the floor) are salvaged into cash based on rarity and item level; a manual salvage action on a weapon pickup prompt does the same. Cash persists; it funds the shop and upgrades.
+- **No auto-continue between rounds.** After a round is cleared the game waits in a **pit stop**: loot stays, the player can compare/equip gear, open the shop, spend skill points, and then presses Continue to start the next intermission. (Co-op: host continues.)
+- **Animations:** per-archetype reload animations (mag out / in, pump, bolt, cylinder) and a grenade throw animation on the viewmodel; melee bash kept. Timings match reloadTime and the grenade cooldown.
+- Skill-tree player hooks (docs/SKILL_TREE.md §5): Q active key, Shield Bash, Deadeye, Second Wind, Overheat, Ricochet Doctrine, extras, class starter weapon; `music.setBossPhase(n)` wiring.
+- XP curve: adopt `100·L^1.1` (docs/SKILL_TREE.md pacing).

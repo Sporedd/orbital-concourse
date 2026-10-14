@@ -23,6 +23,7 @@ import { createLootSystem } from '@/loot';
 import { createProgression } from '@/progression';
 import { createStandingSystem } from '@/standing';
 import { createGearSystem } from '@/gear';
+import { createEconomy } from '@/gear/economy';
 import { createNetSession, type NetSession } from '@/net';
 import { createRoundManager } from '@/rounds';
 import { createHud } from '@/ui';
@@ -62,6 +63,7 @@ function boot() {
   ctx.progression = createProgression(ctx);
   ctx.standing = createStandingSystem(ctx);
   ctx.gear = createGearSystem(ctx);
+  ctx.economy = createEconomy(ctx, ctx.gear);
   localPlayer.reset();
   const net = createNetSession(ctx, { avatars: false, url: 'ws://127.0.0.1:1' });
   ctx.net = net;
@@ -80,6 +82,7 @@ function boot() {
       localPlayer.update(dt);
       ctx.enemies.update(dt);
       ctx.loot.update(dt);
+      ctx.economy?.update(dt);
       ctx.rounds.update(dt);
       ctx.standing?.update(dt);
       ctx.fx.update(dt);
@@ -117,7 +120,7 @@ describe('integrated boot (standing + gear + net wired like main.ts)', () => {
     expect(localPlayer.loadout).toEqual({});
   });
 
-  it('plays round 1 with standing + gear: boss drops a gear piece, walking over equips it, standing is earned', () => {
+  it('plays round 1 with standing + economy: weapons-only shower, bounty, pit stop waits, shop buy equips, standing is earned', () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const b = boot();
     const { ctx, localPlayer } = b;
@@ -133,20 +136,36 @@ describe('integrated boot (standing + gear + net wired like main.ts)', () => {
     expect(ctx.standing!.standing.standing).toBeGreaterThan(0); // round + boss standing
     expect(hype.length).toBeGreaterThan(0);
 
-    // the boss's guaranteed piece is at least Uncommon (mobs may also drop the odd common piece)
-    const gearItem = ctx.loot.items().find((i) => i.kind === 'gear' && i.ownerId === localPlayer.id && i.rarity !== 'common');
-    expect(gearItem?.gear).toBeTruthy();
+    // gear is meta progression: nothing on the floor is gear; the boss shower has weapons
+    expect(ctx.loot.items().some((i) => i.kind === 'gear')).toBe(false);
+    expect(ctx.loot.items().some((i) => i.kind === 'weapon' && i.ownerId === localPlayer.id)).toBe(true);
+    // round-clear bounty 25 + 10·1 (plus any salvage from expired mob guns)
+    expect(ctx.economy!.scrip).toBeGreaterThanOrEqual(35);
 
-    // walk onto it (teleport next to it) → walk-over pickup equips into the empty slot
-    const slot = gearItem!.gear!.slot;
+    // pit stop: no auto-continue, loot does not age
+    const ages = ctx.loot.items().map((i) => i.age);
+    for (let i = 0; i < 100; i++) b.frame(0.2);
+    expect(ctx.rounds.state.phase).toBe('cleared');
+    expect(ctx.loot.items().map((i) => i.age)).toEqual(ages);
+
+    // shop: buy the cheapest piece → equipped into the empty slot, stats merge
+    ctx.economy!.wallet.set(10_000);
+    const piece = [...ctx.economy!.stock].sort((a, b2) => ctx.economy!.price(a) - ctx.economy!.price(b2))[0];
+    const slot = piece.slot;
     const healthMultBefore = getStats(ctx).healthMult;
-    localPlayer.position.set(gearItem!.position.x, gearItem!.position.y, gearItem!.position.z + 0.2);
+    expect(ctx.economy!.buy(piece.id)).toBe('ok');
+    expect(ctx.economy!.scrip).toBe(10_000 - ctx.economy!.price(piece));
+    expect(ctx.gear!.inventory.equipped(slot)?.id).toBe(piece.id);
     b.frame(1 / 60);
-    expect(ctx.loot.items().some((i) => i.id === gearItem!.id)).toBe(false);
-    expect(ctx.gear!.inventory.equipped(slot)?.id).toBe(gearItem!.gear!.id);
-    expect(localPlayer.loadout[slot]?.id).toBe(gearItem!.gear!.id);
+    expect(localPlayer.loadout[slot]?.id).toBe(piece.id);
     expect(getStats(ctx)).not.toBe(ctx.progression.stats); // merged path
     expect(getStats(ctx).healthMult).toBeGreaterThanOrEqual(healthMultBefore);
+
+    // Enter continues to round 2
+    (ctx.input as unknown as { pressed: Set<string> }).pressed.add('Enter');
+    b.frame(1 / 60);
+    expect(ctx.rounds.state.phase).toBe('intermission');
+    expect(ctx.rounds.state.round).toBe(2);
   });
 
   it('death keeps weapons and gear; retry restarts at round 1 with full vitals from the merged stats', () => {

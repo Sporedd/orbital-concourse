@@ -307,6 +307,27 @@ export class Inventory {
     return true;
   }
 
+  /**
+   * Swap an owned piece for an updated copy with the same id (gear upgrades). The copy stays
+   * where the original was (equipped slot or backpack position). False if the id is not owned
+   * or the slot changed.
+   */
+  replace(item: GearDef): boolean {
+    const i = this.bag.findIndex((d) => d.id === item.id);
+    if (i >= 0) {
+      this.bag[i] = item;
+      this.changed();
+      return true;
+    }
+    const worn = this.worn[item.slot];
+    if (worn && worn.id === item.id) {
+      this.worn[item.slot] = item;
+      this.changed();
+      return true;
+    }
+    return false;
+  }
+
   /** Compare a piece with what is worn in its slot. */
   compareToEquipped(item: GearDef): GearComparison {
     return compareGear(item, this.worn[item.slot] ?? null, this.worn);

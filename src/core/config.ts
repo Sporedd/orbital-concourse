@@ -93,7 +93,8 @@ export const bossDamageMult = (tier: number) => 1 + 0.2 * (tier - 1);
 export const playerCountHealthMult = (players: number) => 1 + 0.6 * (players - 1);
 
 // ---- Progression ----------------------------------------------------------
-export const xpForLevel = (level: number) => Math.round(100 * Math.pow(level, 1.4));
+/** XP to go from `level` to `level + 1` (docs/SKILL_TREE.md §1.1 pacing: 100·L^1.1, was 100·L^1.4). */
+export const xpForLevel = (level: number) => Math.round(100 * Math.pow(Math.max(1, level), 1.1));
 export const XP = { mob: 10, boss: 150, roundClear: 50 } as const;
 
 // ---- Loot -----------------------------------------------------------------
@@ -102,8 +103,8 @@ export const LOOT = {
   mobAmmoDropChance: 0.25,
   mobHealthDropChance: 0.1,
   mobGrenadeDropChance: 0.06,
-  /** Gear from regular mobs (bosses always drop one piece). */
-  mobGearDropChance: 0.03,
+  /** Gear is meta progression (bought in the shop, PLAN §13): nothing rolls it as a drop any more. */
+  mobGearDropChance: 0,
   bossDrops: { min: 3, max: 5 },
   pickupRadius: 2.0,
   lifetime: 90,
@@ -111,3 +112,34 @@ export const LOOT = {
 
 // ---- Arena ----------------------------------------------------------------
 export const ARENA = { halfSize: 32 } as const;
+
+// ---- Economy (scrip, shop, upgrades: docs/ECONOMY.md) ------------------------
+export const ECONOMY = {
+  /** Value multiplier per rarity (salvage, prices, upgrade costs). */
+  rarityMult: { common: 1, uncommon: 2, rare: 4, epic: 8, legendary: 16 } as Record<import('./types').Rarity, number>,
+  /** Per item level above 1: value × (1 + levelRate·(level − 1)). */
+  levelRate: 0.15,
+  /** Weapon salvage: salvageBase × rarityMult × levelMult. */
+  salvageBase: 10,
+  /** Round-clear bounty: bountyBase + bountyPerRound · round. */
+  bountyBase: 25,
+  bountyPerRound: 10,
+  /** Shop gear price: priceBase × rarityMult × levelMult. */
+  priceBase: 40,
+  /** Stock size range (one piece per slot first, then random slots). */
+  stockMin: 6,
+  stockMax: 8,
+  /** Shop reroll fee: rerollBase × (1 + levelRate·(tier − 1)). */
+  rerollBase: 15,
+  /** Reinforce (+1 item level): reinforceBase × rarityMult × reinforceGrowth^(level − 1). */
+  reinforceBase: 15,
+  reinforceGrowth: 1.18,
+  /** Retune (reroll one affix in its range): retuneBase × rarityMult × levelMult. */
+  retuneBase: 10,
+  /** Augment (add an affix below the rarity cap): augmentBase × rarityMult × levelMult. */
+  augmentBase: 60,
+  /** Ascend (rarity + 1): ascendBase × rarityMult × levelMult. */
+  ascendBase: 250,
+  /** Reinforce stops at this item level. */
+  maxItemLevel: 40,
+} as const;

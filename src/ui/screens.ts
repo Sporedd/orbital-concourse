@@ -32,6 +32,10 @@ export interface ScreenCallbacks {
   onOpenInventory?(): void;
   /** Game over → start screen (sponsor, co-op, settings). */
   onMainMenu?(): void;
+  /** Shop screen (only offered when ctx.economy exists). */
+  onOpenShop?(): void;
+  /** Pit stop → next round (pause menu row while the round sits cleared). */
+  onContinue?(): void;
 }
 
 export interface Screens {
@@ -48,7 +52,7 @@ export const GAME_TITLE = 'Orbital Concourse';
 const CONTROLS: [string, string][] = [
   ['WASD', 'Move'], ['SHIFT', 'Sprint'], ['SPACE', 'Jump'], ['LMB', 'Fire'],
   ['R', 'Reload'], ['1 2', 'Swap weapon'], ['E', 'Take / swap'], ['V', 'Melee'],
-  ['G', 'Grenade'], ['TAB', 'Skill tree'], ['ESC', 'Pause'], ['M', 'Mute'],
+  ['G', 'Grenade'], ['Q', 'Active'], ['TAB', 'Skill tree'], ['ESC', 'Pause'], ['M', 'Mute'],
 ];
 
 const pad2 = (n: number) => String(Math.max(0, Math.floor(n))).padStart(2, '0');
@@ -211,6 +215,7 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
   const classRow = row(menu, 'CLASS', '▸', () => tree.openPicker());
   startRows.push({ el: classRow, when: () => !!asClassProgression(ctx.progression) });
   startRows.push({ el: row(menu, 'LOADOUT', '[I]', () => cb.onOpenInventory?.()), when: () => !!ctx.gear });
+  startRows.push({ el: row(menu, 'SHOP', '[B]', () => cb.onOpenShop?.()), when: () => !!ctx.economy && !!cb.onOpenShop });
   const sponsorRow = panelRow('SPONSOR', 'sponsor', () => !!ctx.standing);
   startRows.push(sponsorRow);
   startRows.push({ el: row(menu, 'CO-OP', '[F2]', openCoop), when: () => !!ctx.net });
@@ -230,7 +235,7 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
     h('span', 'd', grid, d);
   }
   // optional-system keys (shown when the system exists)
-  for (const [k, d, sys] of [['I', 'Loadout', 'gear'], ['F2', 'Co-op', 'net']] as const) {
+  for (const [k, d, sys] of [['I', 'Loadout', 'gear'], ['F', 'Salvage gun', 'economy'], ['B', 'Shop (pit stop)', 'economy'], ['F2', 'Co-op', 'net']] as const) {
     const a = h('span', 'sb-key', grid, k);
     const b = h('span', 'd', grid, d);
     a.dataset.sys = sys;
@@ -288,8 +293,14 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
   h('div', 'sb-tab', pband);
   const prow = h('div', 'sb-pause-row', pc);
   const pmenu = h('div', 'sb-menu', prow);
+  const pitStop = () => ctx.rounds?.state.phase === 'cleared';
   const pauseRows: MenuRow[] = [
     { el: row(pmenu, 'RESUME', '[LMB]', () => cb.onResume(), true) },
+    {
+      el: row(pmenu, 'CONTINUE · NEXT ROUND', '[ENTER]', () => cb.onContinue?.()),
+      when: () => pitStop() && !!cb.onContinue && !(ctx.net?.inSession && !ctx.isHost),
+    },
+    { el: row(pmenu, 'SHOP', '[B]', () => cb.onOpenShop?.()), when: () => pitStop() && !!ctx.economy && !!cb.onOpenShop },
     { el: row(pmenu, 'SKILL TREE', '[TAB]', () => cb.onOpenSkills?.()) },
     { el: row(pmenu, 'LOADOUT', '[I]', () => cb.onOpenInventory?.()), when: () => !!ctx.gear },
     { el: row(pmenu, 'CO-OP', '[F2]', openCoop), when: () => !!ctx.net },

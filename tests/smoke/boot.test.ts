@@ -113,6 +113,11 @@ describe('boot smoke test (main.ts wiring, headless)', () => {
       }
       expect(ctx.hud.screen, `frame ${i}`).toBe('none');
       if (phases.has('cleared') && ctx.rounds.state.phase === 'intermission') break;
+      // pit stop: waits a while, then Enter continues (src/ui/index.ts → rounds.continue())
+      if (ctx.rounds.state.phase === 'cleared' && ctx.rounds.state.phaseTime > 3) {
+        expect(ctx.rounds.state.round).toBe(1);
+        (ctx.input as unknown as { pressed: Set<string> }).pressed.add('Enter');
+      }
     }
 
     expect(phases.has('wave')).toBe(true);

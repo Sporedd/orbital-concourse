@@ -23,6 +23,13 @@ export type { GearComparison, GearCompareLine, GearStorage, InventoryEvents } fr
 export { applyWeaponGrowth, weaponGrowthParams, type WeaponGrowthParams } from './weaponGrowth';
 export { createInventoryScreen, type InventoryScreen, type InventoryScreenOptions } from './inventoryScreen';
 export * as gearPalette from './palette';
+export * from './economyMath';
+export * from './upgrades';
+export { Wallet, WALLET_STORAGE_KEY, MAX_SCRIP } from './wallet';
+export {
+  SHOP_STORAGE_KEY, SHOP_RARITY_CAP, SHOP_LEAGUE_BOOST, shopRarityCap, shopRarityWeights, rollShopRarity, generateStock, loadShop, saveShop,
+} from './shop';
+export { createEconomy, type EconomySystem, type EconomyOptions, type BuyResult, type UpgradeOutcome } from './economy';
 
 export interface GearSystem {
   readonly inventory: Inventory;

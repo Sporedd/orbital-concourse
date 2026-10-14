@@ -3,6 +3,8 @@
  * shield/health panel, ammo panel with pips, round plate, hype panel, boss bar with phase
  * notches, damage tags, pickup prompt + cargo-manifest card, LED-ribbon banners, messages,
  * level-up ribbon, muted indicator and a mount point for the standing widgets.
+ * Economy (PLAN §13): a SCRIP row in the ammo panel with a rising +NN tag on gain, the
+ * [F] SALVAGE +NN prompt action, and the PIT STOP band (top centre) while a round sits cleared.
  */
 import * as THREE from 'three';
 import { ADS, INTERMISSION_SECONDS, PLAYER, SUB_WAVES } from '@/core/config';
@@ -13,6 +15,15 @@ import { createDamageNumbers } from './damageNumbers';
 import { esc, h, rarityCss, setScaleX, setText } from './dom';
 import { ARCHETYPE_LABEL } from '@/loot/weapons';
 import { manifestHtml } from './weaponCard';
+import { fmtScrip, roundBounty, weaponSalvageValue } from '@/gear/economyMath';
+
+/** Pit-stop band actions (src/ui/index.ts wires them to the round manager and the screens). */
+export interface PitStopActions {
+  continue(): void;
+  shop(): void;
+  loadout(): void;
+  skills(): void;
+}
 
 export interface HudWidgets {
   update(dt: number): void;
@@ -48,7 +59,11 @@ export function vitalText(current: number, max: number): string {
   return `${Math.min(Math.max(0, Math.ceil(current)), m)} / ${m}`;
 }
 
-export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidgets {
+const SCRIP_REASON: Record<string, string> = {
+  salvage: 'SALVAGE', expired: 'SALVAGE', bounty: 'BOUNTY', purchase: 'SHOP', reroll: 'SHOP', upgrade: 'UPGRADE', other: '',
+};
+
+export function createHudWidgets(ctx: GameContext, root: HTMLElement, pit?: PitStopActions): HudWidgets {
   const hud = h('div', 'sb-hud', root);
 
   // ---- aim down sights: vignette + scope (under everything else) ---------------------------
@@ -116,8 +131,19 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
   const xpFill = h('i', '', xpLine);
   const gren = h('div', 'sb-gren', foot);
   const grenIcons: HTMLElement[] = [];
-  for (let i = 0; i < PLAYER.maxGrenades; i++) grenIcons.push(h('i', '', gren));
+  /** One icon per grenade slot: player.maxGrenades (gear + Bandolier / Ordnance Bay), max 8 drawn. */
+  const syncGrenSlots = (cap: number) => {
+    const n = Math.max(1, Math.min(8, Math.floor(cap)));
+    while (grenIcons.length < n) grenIcons.push(h('i', '', gren));
+    while (grenIcons.length > n) grenIcons.pop()!.remove();
+  };
+  syncGrenSlots(PLAYER.maxGrenades);
   const grenNum = h('span', 'sb-lbl', foot);
+  // class active (Q): READY / CD 12 S / ACTIVE 4 S chip above the vitals panel, right side
+  const qChip = h('div', 'sb-qchip sb-hidden', vitals);
+  h('span', 'sb-key', qChip, 'Q');
+  const qText = h('span', '', qChip);
+  let qKey = '';
   let shieldWas = 1;
   let shieldFlash = 0;
 
@@ -132,6 +158,12 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
   const pips = h('div', 'sb-pips', ammo);
   const wname = h('div', 'sb-wname', ammo);
   const wsub = h('div', 'sb-wsub sb-lbl', ammo);
+  const scripRow = h('div', 'sb-scrip sb-hidden', ammo);
+  h('span', 'sb-lbl', scripRow, 'SCRIP');
+  const scripVal = h('span', 'sb-val', scripRow);
+  const scripFloats = h('div', 'sb-scripfloats', ammo);
+  const liveFloats: { el: HTMLElement; t: number }[] = [];
+  let scripShown = -1;
   let pipsKey = '';
   let wKey = '';
   let slotsKey = '';
@@ -197,6 +229,29 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
   const msgs = h('div', 'sb-msgs', hud);
   const msgQueue: { text: string; duration: number; style: string; at: number }[] = [];
   const liveMsgs: { el: HTMLElement; t: number }[] = [];
+
+  // ---- pit stop band (top centre, phase 'cleared') ---------------------------------------------
+  const pitEl = h('div', 'sb-pit sb-hidden', hud);
+  h('div', 'sb-tab', pitEl);
+  const pitBand = h('div', 'band', pitEl);
+  const pitHd = h('div', 'hd', pitBand);
+  h('span', 'big', pitHd, 'PIT STOP');
+  const pitLine = h('span', 'l', pitHd);
+  const pitActs = h('div', 'acts', pitBand);
+  const pitBtn = (key: string, label: string, fn: () => void, cls = '') => {
+    const b = h('button', cls, pitActs);
+    b.type = 'button';
+    b.innerHTML = `<span class="sb-key">${key}</span><span class="sb-act">${label}</span>`;
+    b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+    return b;
+  };
+  const pitGo = pitBtn('ENTER', 'CONTINUE', () => pit?.continue(), 'go');
+  const pitWait = h('div', 'wait sb-hidden', pitActs, 'WAITING FOR HOST');
+  const pitShop = pitBtn('B', 'SHOP', () => pit?.shop());
+  pitBtn('I', 'LOADOUT', () => pit?.loadout());
+  pitBtn('TAB', 'SKILLS', () => pit?.skills());
+  h('div', 'sb-tab', pitEl);
+  let pitKey = '';
 
   // ---- prompt + manifest ----------------------------------------------------------------------
   const prompt = h('div', 'sb-prompt sb-hidden', hud);
@@ -307,10 +362,19 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
     crowdLine(`HEADLINER: ${name}`, 4);
   });
   ctx.events.on('round:cleared', (e) => {
+    const bounty = ctx.economy ? ` · BOUNTY +${roundBounty(e.round)}` : '';
     queueRibbon('cleared', `
       <div class="sb-tab bone"></div>
-      <div class="band"><div class="big">CLEARED</div><div class="l2">ROUND ${pad2(e.round)} · LOOT THE FLOOR</div></div>
+      <div class="band"><div class="big">CLEARED</div><div class="l2">ROUND ${pad2(e.round)}${bounty} · PIT STOP</div></div>
       <div class="sb-tab bone"></div>`, 2.4);
+  });
+  ctx.events.on('wallet:changed', (e) => {
+    if (e.delta <= 0) return;
+    const why = SCRIP_REASON[e.reason] ?? '';
+    const el = h('div', 'sb-scripfloat', scripFloats);
+    el.innerHTML = `+${e.delta}${why ? ` <span>${why}</span>` : ''}`;
+    liveFloats.push({ el, t: 0.9 });
+    while (liveFloats.length > 3) liveFloats.shift()!.el.remove();
   });
   ctx.events.on('round:subwave', (e) => {
     if (e.subWave > 1) pushMessage(`WAVE ${e.subWave}/${e.total} · GATES CYCLING`, 2.2, 'info');
@@ -397,6 +461,8 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
     numbers.clear();
     reload = null;
     promptItem = null;
+    for (const f of liveFloats) f.el.remove();
+    liveFloats.length = 0;
     for (const m of liveMsgs) m.el.remove();
     liveMsgs.length = 0;
     fresh(msgQueue);
@@ -478,6 +544,7 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
       setText(healthVal, vitalText(p.health, mh));
       vitals.classList.toggle('low', hf < 0.25 && p.alive);
       lowEdge.classList.toggle('on', hf < 0.25 && p.alive);
+      syncGrenSlots(p.maxGrenades ?? (ctx.gear ? ctx.gear.maxGrenades(PLAYER.maxGrenades) : PLAYER.maxGrenades));
       for (let i = 0; i < grenIcons.length; i++) grenIcons[i].classList.toggle('off', i >= p.grenades);
       setText(grenNum, p.grenades > grenIcons.length ? `×${p.grenades}` : 'GRN');
 
@@ -565,7 +632,7 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
         case 'intermission': line = `GATES OPEN IN ${pad2(Math.ceil(INTERMISSION_SECONDS - rs.phaseTime))}`; break;
         case 'wave': line = `WAVE ${Math.max(1, rs.subWave)}/${SUB_WAVES} · ${pad2(left)} LEFT`; break;
         case 'boss': line = 'HEADLINER · KILL IT'; break;
-        case 'cleared': line = 'CLEARED · LOOT UP'; break;
+        case 'cleared': line = ctx.net?.inSession && !ctx.isHost ? 'WAITING FOR HOST' : 'PIT STOP · LOOT UP'; break;
         default: line = 'STAND BY';
       }
       const waitHost = !!ctx.net?.inSession && !ctx.isHost && (rs.phase === 'idle' || rs.phase === 'gameover');
@@ -624,9 +691,25 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
 
     // XP + skill points
     const prog = ctx.progression;
+    const act = (prog as unknown as { activeAbility?: { def: { name: string }; unlocked: boolean; ready: boolean; active: boolean; cooldownLeft: number; activeLeft: number } | null } | undefined)?.activeAbility;
+    if (act && act.unlocked) {
+      const st = act.active ? 'on' : act.ready ? 'ready' : 'cd';
+      const txt = act.active ? `${act.def.name.toUpperCase()} · ${Math.ceil(act.activeLeft)} S`
+        : act.ready ? `${act.def.name.toUpperCase()} · READY` : `${act.def.name.toUpperCase()} · ${Math.ceil(act.cooldownLeft)} S`;
+      const k = `${st}|${txt}`;
+      if (k !== qKey) {
+        qKey = k;
+        qChip.className = `sb-qchip ${st}`;
+        qText.textContent = txt;
+      }
+    } else if (qKey !== '') {
+      qKey = '';
+      qChip.className = 'sb-qchip sb-hidden';
+    }
     if (prog) {
       setText(lvlEl, `LV ${pad2(prog.level)}`);
-      setScaleX(xpFill, prog.xpToNext > 0 ? prog.xp / prog.xpToNext : 0);
+      // clamp: a save from an older (steeper) XP curve can hold more XP than the new step
+      setScaleX(xpFill, prog.xpToNext > 0 ? Math.min(1, prog.xp / prog.xpToNext) : 0);
       pts.style.display = prog.skillPoints > 0 ? '' : 'none';
       setText(ptsText, `${prog.skillPoints} SKILL POINT${prog.skillPoints === 1 ? '' : 'S'}`);
     }
@@ -667,15 +750,48 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement): HudWidget
       }
     }
 
+    // Scrip (ammo panel row) + rising gain tags
+    const eco = ctx.economy;
+    scripRow.classList.toggle('sb-hidden', !eco);
+    if (eco && eco.scrip !== scripShown) {
+      scripShown = eco.scrip;
+      setText(scripVal, fmtScrip(scripShown));
+    }
+    for (let i = liveFloats.length - 1; i >= 0; i--) {
+      const f = liveFloats[i];
+      f.t -= dt;
+      if (f.t <= 0) {
+        f.el.remove();
+        liveFloats.splice(i, 1);
+      }
+    }
+
+    // Pit stop band: after the boss bar has gone, while the round sits cleared
+    const pitOn = !!rs && rs.phase === 'cleared' && !bossEnemy && !!p?.alive;
+    pitEl.classList.toggle('sb-hidden', !pitOn);
+    if (pitOn && rs) {
+      const client = !!ctx.net?.inSession && !ctx.isHost;
+      const pk = `${rs.round}|${client}|${eco ? 1 : 0}`;
+      if (pk !== pitKey) {
+        pitKey = pk;
+        setText(pitLine, `ROUND ${pad2(rs.round)} CLEARED · LOOT STAYS · NEXT: ROUND ${pad2(rs.round + 1)}`);
+        pitGo.classList.toggle('sb-hidden', client);
+        pitWait.classList.toggle('sb-hidden', !client);
+        pitShop.classList.toggle('sb-hidden', !eco);
+      }
+    }
+
     // Pickup prompt + manifest
     if (promptItem && promptItem.weapon && p && p.alive) {
       const nw = promptItem.weapon;
-      const k = `${nw.id}|${w ? w.id : ''}`;
+      const k = `${nw.id}|${w ? w.id : ''}|${eco ? 1 : 0}`;
       if (k !== promptKey) {
         promptKey = k;
         const swap = p.weapons.every((x) => !!x);
-        prompt.innerHTML = `<span class="sb-key">E</span><span class="sb-act">${swap ? 'SWAP' : 'TAKE'}</span><span class="what"><span class="sb-sq" style="background:${rarityCss(nw.rarity)}"></span><span class="nm">${esc(nw.name)}</span></span><span class="rar">${nw.rarity.toUpperCase()}</span>`;
-        card.innerHTML = manifestHtml(nw, w, { swap });
+        const salvage = eco ? weaponSalvageValue(nw) : 0;
+        const salvageHtml = salvage ? `<span class="sb-key salv">F</span><span class="sb-act">SALVAGE +${salvage}</span>` : '';
+        prompt.innerHTML = `<span class="sb-key">E</span><span class="sb-act">${swap ? 'SWAP' : 'TAKE'}</span><span class="what"><span class="sb-sq" style="background:${rarityCss(nw.rarity)}"></span><span class="nm">${esc(nw.name)}</span></span><span class="rar">${nw.rarity.toUpperCase()}</span>${salvageHtml}`;
+        card.innerHTML = manifestHtml(nw, w, { swap, salvage });
       }
       prompt.classList.remove('sb-hidden');
       cardSlot.classList.remove('sb-hidden');

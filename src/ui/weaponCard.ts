@@ -55,7 +55,7 @@ function delta(r: Row): string {
 }
 
 /** Full manifest card for a candidate weapon (`next`) against the current one. */
-export function manifestHtml(next: WeaponDef, cur: WeaponDef | null, opts: { swap?: boolean } = {}): string {
+export function manifestHtml(next: WeaponDef, cur: WeaponDef | null, opts: { swap?: boolean; salvage?: number } = {}): string {
   const dmg = (w: WeaponDef) => w.damage * w.pellets;
   const rows: Row[] = [
     { label: 'DPS', a: weaponDps(next), b: cur ? weaponDps(cur) : null, fmt: (v) => v.toFixed(0), higherIsBetter: true },
@@ -84,7 +84,7 @@ export function manifestHtml(next: WeaponDef, cur: WeaponDef | null, opts: { swa
       ${perks}
       <div class="foot">
         <div>${barcode(next.id)}<div class="sb-serial">${serialOf(next)}</div></div>
-        <div class="keys"><span><span class="sb-key">E</span><span class="sb-act">${opts.swap ? 'SWAP' : 'TAKE'}</span></span></div>
+        <div class="keys"><span><span class="sb-key">E</span><span class="sb-act">${opts.swap ? 'SWAP' : 'TAKE'}</span></span>${opts.salvage ? `<span><span class="sb-key">F</span><span class="sb-act">SALVAGE +${opts.salvage}</span></span>` : ''}</div>
       </div>
     </div>`;
 }

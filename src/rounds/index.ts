@@ -1,20 +1,23 @@
 /**
  * System D — round state machine (PLAN §2):
- * idle → intermission → wave (SUB_WAVES sub-waves, trickle spawns) → boss → cleared → intermission …
- * any → gameover on death. Host-only sim; emits events for HUD/audio.
+ * idle → intermission → wave (SUB_WAVES sub-waves, trickle spawns) → boss → cleared (PIT STOP)
+ * ─continue()→ intermission … ; any → gameover on death. Host-only sim; emits events for HUD/audio.
+ *
+ * Pit stop (PLAN §13): 'cleared' never times out. Leftover minions are killed when it starts,
+ * loot stops aging (src/loot), and the run waits until continue() (Enter / CONTINUE on the
+ * host; co-op clients wait for the host). Bosses drop weapons only: gear is bought in the shop.
  *
  * Run modifiers (sponsor contract, system I): enemy count, loot count, no grenade drops and
  * "a headliner closes every sub-wave" (bossEveryRound). The ROARING crowd's "bonus wave" gift
  * extends the current sub-wave. A run keeps the player's weapons and gear (start() only adds a
- * starter gun when both slots are empty).
+ * starter gun when both slots are empty: the class starter archetype, docs/SKILL_TREE.md §2).
  */
 import * as THREE from 'three';
 import { INTERMISSION_SECONDS, LOOT, SUB_WAVES, maxAliveForRound, mobsForRound } from '@/core/config';
 import { randInt, randRange } from '@/core/rng';
-import type { BossKind, GameContext, LootKind, RoundManager, RoundPhase, RoundState } from '@/core/types';
+import type { BossKind, GameContext, LootKind, RoundManager, RoundPhase, RoundState, WeaponArchetype } from '@/core/types';
 import { scaleEnemyCount, scaleLootCount } from '@/standing/sponsors';
 
-const CLEARED_SECONDS = 8;
 const SUBWAVE_BREAK = 2.5;
 const BOSS_NAMES: Record<BossKind, string> = { brute: 'Brute', summoner: 'Summoner', artillery: 'Artillery' };
 const BOSS_CYCLE: readonly BossKind[] = ['brute', 'summoner', 'artillery'];
@@ -172,17 +175,35 @@ export function createRoundManager(ctx: GameContext): RoundManager {
 
   function beginCleared(): void {
     setPhase('cleared');
+    // Pit stop: nothing hostile stays alive (summoner adds, stragglers). No killer → no drops.
+    for (const e of ctx.enemies.list()) {
+      if (e.alive && !e.isBoss) e.damage(1e9, { cause: 'other' });
+    }
     const drops = randInt(ctx.rng, LOOT.bossDrops.min, LOOT.bossDrops.max);
     const m = run();
     ctx.loot.dropLoot(bossPos.clone(), {
       tier: state.round,
       rarityBoost: 0.5,
       count: m ? scaleLootCount(drops, m, 2) : drops,
-      guaranteed: ['weapon', 'gear'],
+      guaranteed: ['weapon'],
     });
     ctx.events.emit('round:cleared', { round: state.round });
     const bossName = state.bossKind ? BOSS_NAMES[state.bossKind] : 'Boss';
-    ctx.events.emit('ui:message', { text: `${bossName} down! Grab the loot`, duration: 4, style: 'legendary' });
+    ctx.events.emit('ui:message', { text: `${bossName} down! Pit stop: loot, shop, then continue`, duration: 4, style: 'legendary' });
+  }
+
+  /** Pit stop → next round's intermission. */
+  function continueRun(): boolean {
+    if (!ctx.isHost || state.phase !== 'cleared') return false;
+    state.round++;
+    beginIntermission();
+    return true;
+  }
+
+  /** The class starter (classDef.starterArchetype) when a class is picked, else the pistol. */
+  function starterArchetype(): WeaponArchetype | undefined {
+    const def = (ctx.progression as unknown as { classDef?: { starterArchetype?: WeaponArchetype } | null } | undefined)?.classDef;
+    return def?.starterArchetype;
   }
 
   function rollMobDrops(position: THREE.Vector3): void {
@@ -258,7 +279,7 @@ export function createRoundManager(ctx: GameContext): RoundManager {
     // Weapons and gear are KEPT across runs (design decision); reset() restores vitals/ammo and
     // reads the sponsor contract, which choose() has already applied.
     ctx.player.reset();
-    if (!ctx.player.weapons.some((w) => !!w)) ctx.player.equip(ctx.loot.starterWeapon());
+    if (!ctx.player.weapons.some((w) => !!w)) ctx.player.equip(ctx.loot.starterWeapon(starterArchetype()));
     state.round = 1;
     state.totalKills = 0;
     state.kills = 0;
@@ -278,7 +299,7 @@ export function createRoundManager(ctx: GameContext): RoundManager {
     // Freeze the round clock while a menu is open (single-player only: in a co-op session the
     // host's menus must not stop the shared simulation).
     const screen = ctx.hud ? ctx.hud.screen : 'none';
-    if ((screen === 'pause' || screen === 'skills' || screen === 'inventory') && !inSession()) return;
+    if ((screen === 'pause' || screen === 'skills' || screen === 'inventory' || screen === 'shop') && !inSession()) return;
 
     state.phaseTime += dt;
     switch (state.phase) {
@@ -292,15 +313,12 @@ export function createRoundManager(ctx: GameContext): RoundManager {
         updateBoss();
         break;
       case 'cleared':
-        if (state.phaseTime >= CLEARED_SECONDS) {
-          state.round++;
-          beginIntermission();
-        }
+        // Pit stop: waits for continue() (no auto-continue).
         break;
       default:
         break;
     }
   }
 
-  return { state, start, update };
+  return { state, start, update, continue: continueRun };
 }

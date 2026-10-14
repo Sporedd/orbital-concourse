@@ -185,7 +185,7 @@ export function createSkillTree(ctx: GameContext, panel: HTMLElement, overlayRoo
     const a = p.activeAbility;
     if (!a) return '';
     const def = a.def;
-    const keyLive = false; // docs §5.1 player:activeKey — flip when the player binds the key
+    const keyLive = true; // docs §5.1 player:activeKey — bound to Q (src/player)
     const state = !a.unlocked ? 'LOCKED' : a.active ? `ACTIVE ${Math.ceil(a.activeLeft)} S` : a.ready ? 'READY' : `CD ${Math.ceil(a.cooldownLeft)} S`;
     const note = !a.unlocked
       ? 'UNLOCKS WITH YOUR FIRST KEYSTONE'
