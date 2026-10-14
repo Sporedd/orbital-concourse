@@ -2,6 +2,11 @@
  * Procedural first-person gun. Built from boxes/cylinders per archetype, parented to the
  * camera, animated with sway, bob, recoil kick, reload, swap, melee bash and grenade throw.
  *
+ * Reloads and the grenade throw are keyframe clips (./animations.ts) played on the gun's tagged
+ * parts (`userData.vmRole` from weaponGrowth, `userData.vmAnim` for slide/handle/pump/bolt), an
+ * off-hand and a hand-held grenade/shell. They compose additively on top of the procedural pose;
+ * part rest poses are read when a clip starts, so grown (item-level) mags and barrels just work.
+ *
  * The whole viewmodel is built at "real" size and then scaled by VM_SCALE while sitting
  * proportionally closer to the eye: identical on screen, but it pokes into walls far less.
  */
@@ -16,6 +21,10 @@ import { buildGloveViewmodel, type GearModel } from '@/gear/models';
 import type { GearDef } from '@/gear/types';
 import type { Controller } from './controller';
 import { clamp, damp, smooth } from './shared';
+import {
+  THROW_CLIP, THROW_RELEASE, THROW_TIME, inSpans, reloadClip, sample, sampleHand,
+  type Anchor, type PoseTracks, type ReloadClip,
+} from './animations';
 
 /** Presentation-only randomness (kick roll, muzzle flash): keeps the sim RNG (ctx.rng) deterministic. */
 const presRng = createRng(0x7e3a1);
@@ -27,7 +36,20 @@ const SWAP_RAISE = 0.2;
 /** Total time a weapon swap blocks firing. */
 export const SWAP_TIME = SWAP_LOWER + SWAP_RAISE;
 const BASH_TIME = 0.32;
-const THROW_TIME = 0.45;
+/** An interrupted reload/throw snaps back to the pose over this long. */
+const ANIM_CANCEL_TIME = 0.1;
+/** Off-hand parking spot below the screen (pivot units) and the throw hand's (root units). */
+const OFF_HAND_PARK = new THREE.Vector3(-0.35, -0.6, 0.1);
+const THROW_HAND_PARK = new THREE.Vector3(-0.72, -0.6, 0.06);
+/** Grenade in the throwing palm (throw-hand local). */
+const GRENADE_IN_HAND = new THREE.Vector3(0.0, 0.035, -0.035);
+/** Loading port / ejection port the off-hand pushes shells or rounds into (model space). */
+const PORTS: Partial<Record<WeaponArchetype, THREE.Vector3>> = {
+  shotgun: new THREE.Vector3(0, -0.035, -0.07),
+  sniper: new THREE.Vector3(0.02, 0.1, -0.03),
+};
+const AXIS_X = new THREE.Vector3(1, 0, 0);
+const AXIS_Z = new THREE.Vector3(0, 0, 1);
 const FLASH_TIME = 0.055;
 const FLASH_LIGHT_INTENSITY = 10;
 /** The flash light sits ahead of the muzzle (camera-local metres): it lights the world, not the gun. */
@@ -50,6 +72,10 @@ const STEEL = PALETTE.STEEL;
 const DARK = PALETTE.STEEL_DARK;
 const SLEEVE = 0x3a3d38;
 const GLOVE = 0x1e1f1c;
+/** Hand-held grenade: the world grenade's look (src/player/grenades.ts), copied, not imported. */
+const GRENADE_BODY = 0x4d5e3a;
+const GRENADE_CAP = 0x2a2e38;
+const GRENADE_SPARK = 0xffa040;
 
 /** Small builder that tracks geometries for disposal. */
 class Parts {
@@ -79,6 +105,25 @@ class Parts {
     this.group.add(m);
     return m;
   }
+
+  sphere(r: number, mat: THREE.Material, x: number, y: number, z: number, seg = 10): THREE.Mesh {
+    const g = new THREE.SphereGeometry(r, seg, Math.max(4, Math.round(seg * 0.75)));
+    this.geoms.push(g);
+    const m = new THREE.Mesh(g, mat);
+    m.position.set(x, y, z);
+    m.castShadow = false;
+    m.receiveShadow = false;
+    this.group.add(m);
+    return m;
+  }
+
+  /** A sub-group at (x, y, z) with its own builder (moving assemblies: the sniper bolt). */
+  child(x: number, y: number, z: number): [THREE.Group, Parts] {
+    const g = new THREE.Group();
+    g.position.set(x, y, z);
+    this.group.add(g);
+    return [g, new Parts(g, this.geoms)];
+  }
 }
 
 interface GunMats {
@@ -91,14 +136,16 @@ type GunBuilder = (p: Parts, m: GunMats) => THREE.Vector3; // returns muzzle pos
 
 const BUILDERS: Record<WeaponArchetype, GunBuilder> = {
   pistol(p, m) {
-    p.box(0.065, 0.07, 0.3, m.body, 0, 0.05, -0.1); // slide
+    p.box(0.065, 0.07, 0.3, m.body, 0, 0.05, -0.1).userData.vmAnim = 'slide'; // slide
     p.box(0.06, 0.045, 0.22, m.dark, 0, 0.0, -0.08); // frame
     p.box(0.055, 0.15, 0.075, m.dark, 0, -0.08, 0.02, -0.25); // grip
+    // magazine inside the grip (hidden while seated; animation-only tag, so weapon growth leaves it)
+    p.box(0.044, 0.135, 0.058, m.dark, 0, -0.085, 0.022, -0.25).userData.vmAnim = 'mag';
     p.box(0.012, 0.05, 0.05, m.dark, 0, -0.035, -0.06); // trigger guard
     p.cyl(0.017, 0.06, m.dark, 0, 0.05, -0.27).userData.vmRole = 'barrel';
-    p.box(0.07, 0.012, 0.2, m.accent, 0, 0.068, -0.1); // glow strip
-    p.box(0.012, 0.022, 0.02, m.accent, 0, 0.095, -0.22); // front sight
-    p.box(0.058, 0.02, 0.02, m.accent, 0, -0.15, 0.04, -0.25); // grip cap
+    p.box(0.07, 0.012, 0.2, m.accent, 0, 0.068, -0.1).userData.vmAnim = 'slide'; // glow strip
+    p.box(0.012, 0.022, 0.02, m.accent, 0, 0.095, -0.22).userData.vmAnim = 'slide'; // front sight
+    p.box(0.058, 0.02, 0.02, m.accent, 0, -0.15, 0.04, -0.25).userData.vmAnim = 'magPart'; // grip cap = mag base plate
     return new THREE.Vector3(0, 0.05, -0.31);
   },
   smg(p, m) {
@@ -111,13 +158,14 @@ const BUILDERS: Record<WeaponArchetype, GunBuilder> = {
     p.box(0.05, 0.06, 0.1, m.dark, 0, 0.04, 0.09); // stub stock
     p.box(0.084, 0.016, 0.26, m.accent, 0, 0.065, -0.12); // side strip
     p.box(0.02, 0.03, 0.04, m.dark, 0, 0.1, -0.02); // rear sight
+    p.box(0.024, 0.02, 0.032, m.dark, -0.05, 0.07, -0.2).userData.vmAnim = 'handle'; // left cocking knob
     return new THREE.Vector3(0, 0.05, -0.5);
   },
   shotgun(p, m) {
     p.box(0.1, 0.11, 0.26, m.body, 0, 0.03, -0.04); // receiver
     p.cyl(0.025, 0.52, m.dark, -0.026, 0.065, -0.42, 10).userData.vmRole = 'barrel';
     p.cyl(0.025, 0.52, m.dark, 0.026, 0.065, -0.42, 10).userData.vmRole = 'barrel';
-    p.box(0.1, 0.06, 0.18, m.body, 0, 0.01, -0.34); // forend
+    p.box(0.1, 0.06, 0.18, m.body, 0, 0.01, -0.34).userData.vmAnim = 'pump'; // forend
     p.box(0.11, 0.016, 0.03, m.accent, 0, 0.098, -0.62).userData.vmRole = 'muzzle'; // muzzle band
     p.box(0.11, 0.016, 0.03, m.accent, 0, 0.032, -0.62).userData.vmRole = 'muzzle';
     p.box(0.104, 0.018, 0.2, m.accent, 0, 0.05, -0.04); // receiver strip
@@ -137,6 +185,7 @@ const BUILDERS: Record<WeaponArchetype, GunBuilder> = {
     p.box(0.032, 0.032, 0.006, m.accent, 0, 0.138, -0.112).userData.vmRole = 'scope'; // lens
     p.box(0.084, 0.016, 0.3, m.accent, 0, 0.06, -0.14); // side strip
     p.box(0.076, 0.012, 0.02, m.accent, 0, 0.07, -0.47); // handguard band
+    p.box(0.07, 0.014, 0.018, m.dark, 0, 0.1, 0.085).userData.vmAnim = 'handle'; // T charging handle
     return new THREE.Vector3(0, 0.06, -0.63);
   },
   sniper(p, m) {
@@ -153,11 +202,118 @@ const BUILDERS: Record<WeaponArchetype, GunBuilder> = {
     p.box(0.065, 0.12, 0.26, m.body, 0, 0.0, 0.25); // stock
     p.box(0.05, 0.08, 0.08, m.dark, 0, -0.04, -0.07).userData.vmRole = 'mag'; // mag
     p.box(0.05, 0.13, 0.07, m.dark, 0, -0.07, 0.06, -0.25); // grip
-    p.cyl(0.012, 0.07, m.dark, 0.05, 0.06, 0.02, 6); // bolt handle
+    // bolt: body on the bore line (slides out the back when open), handle + knob out to the right
+    const [bolt, bp] = p.child(0.005, 0.07, 0.03);
+    bolt.userData.vmAnim = 'bolt';
+    bolt.userData.knob = new THREE.Vector3(0.075, 0, 0);
+    bp.cyl(0.018, 0.1, m.dark, 0, 0, 0, 8);
+    bp.box(0.07, 0.014, 0.014, m.dark, 0.035, 0, 0);
+    bp.sphere(0.016, m.dark, 0.075, 0, 0, 8);
     p.box(0.084, 0.014, 0.36, m.accent, 0, 0.065, -0.1); // side strip
     return new THREE.Vector3(0, 0.055, -0.9);
   },
 };
+
+interface PartRest {
+  obj: THREE.Object3D;
+  pos: THREE.Vector3;
+  quat: THREE.Quaternion;
+  visible: boolean;
+}
+
+/** The current gun's animated parts with their rest transforms (read when a clip starts). */
+interface Rig {
+  all: PartRest[];
+  mag: PartRest[];
+  slide: PartRest[];
+  handle: PartRest[];
+  pump: PartRest[];
+  bolt: PartRest[];
+  /** Magazine down axis, top-front hinge and bottom (hand grip point), model space. */
+  magDown: THREE.Vector3;
+  magHinge: THREE.Vector3;
+  magBottom: THREE.Vector3 | null;
+  slideAt: THREE.Vector3 | null;
+  handleAt: THREE.Vector3 | null;
+  pumpAt: THREE.Vector3 | null;
+  knob: THREE.Vector3 | null;
+  port: THREE.Vector3 | null;
+}
+
+interface ReloadState {
+  t: number;
+  dur: number;
+  u: number;
+  /** >= 0 while snapping back after an interruption. */
+  cancelT: number;
+  clip: ReloadClip | null;
+  rig: Rig | null;
+}
+
+function meshSize(o: THREE.Object3D): THREE.Vector3 {
+  const g = (o as THREE.Mesh).geometry;
+  if (!g) return new THREE.Vector3();
+  if (!g.boundingBox) g.computeBoundingBox();
+  return g.boundingBox!.getSize(new THREE.Vector3()).multiply(o.scale);
+}
+
+/** Collect the animated parts of a built (and grown) gun; their CURRENT transforms are the rest pose. */
+function buildRig(model: THREE.Group, archetype: WeaponArchetype): Rig {
+  const rest = (o: THREE.Object3D): PartRest => ({ obj: o, pos: o.position.clone(), quat: o.quaternion.clone(), visible: o.visible });
+  const rig: Rig = {
+    all: [], mag: [], slide: [], handle: [], pump: [], bolt: [],
+    magDown: new THREE.Vector3(0, -1, 0), magHinge: new THREE.Vector3(), magBottom: null,
+    slideAt: null, handleAt: null, pumpAt: null, knob: null, port: PORTS[archetype]?.clone() ?? null,
+  };
+  let primary: THREE.Object3D | null = null;
+  const growth: THREE.Object3D[] = [];
+  for (const o of model.children) {
+    const role = o.userData.vmRole as string | undefined;
+    const anim = o.userData.vmAnim as string | undefined;
+    if (anim === 'mag' || role === 'mag') {
+      primary ??= o;
+      rig.mag.push(rest(o));
+    } else if (anim === 'magPart' || role === 'magEnd') rig.mag.push(rest(o));
+    else if (role === 'growth') growth.push(o);
+    else if (anim === 'slide') rig.slide.push(rest(o));
+    else if (anim === 'handle') rig.handle.push(rest(o));
+    else if (anim === 'pump') rig.pump.push(rest(o));
+    else if (anim === 'bolt') rig.bolt.push(rest(o));
+  }
+  if (primary) {
+    const s = meshSize(primary);
+    rig.magDown.set(0, -1, 0).applyQuaternion(primary.quaternion);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(primary.quaternion);
+    const bottom = primary.position.clone().addScaledVector(rig.magDown, s.y / 2);
+    rig.magHinge.copy(primary.position).addScaledVector(rig.magDown, -s.y / 2).addScaledVector(fwd, s.z / 2);
+    // the growth mag extension (weaponGrowth) sits on the mag bottom: it rides along
+    let ext = false;
+    for (const g of growth) {
+      if (g.position.distanceTo(bottom) < 0.035) {
+        rig.mag.push(rest(g));
+        ext = true;
+      }
+    }
+    rig.magBottom = bottom.addScaledVector(rig.magDown, ext ? 0.03 : 0);
+  }
+  if (rig.slide.length) {
+    const main = rig.slide[0].obj;
+    rig.slideAt = main.position.clone().add(new THREE.Vector3(0, 0, Math.max(0, meshSize(main).z / 2 - 0.04)));
+  }
+  if (rig.handle.length) rig.handleAt = rig.handle[0].obj.position.clone();
+  if (rig.pump.length) rig.pumpAt = rig.pump[0].obj.position.clone();
+  if (rig.bolt.length) rig.knob = (rig.bolt[0].obj.userData.knob as THREE.Vector3 | undefined)?.clone() ?? new THREE.Vector3();
+  rig.all = [...rig.mag, ...rig.slide, ...rig.handle, ...rig.pump, ...rig.bolt];
+  return rig;
+}
+
+function restoreRig(rig: Rig): void {
+  for (const p of rig.all) {
+    p.obj.position.copy(p.pos);
+    p.obj.quaternion.copy(p.quat);
+    p.obj.visible = p.visible;
+  }
+}
 
 export class Viewmodel {
   /** Camera child. */
@@ -188,10 +344,34 @@ export class Viewmodel {
   private kickRoll = 0;
   private sprintT = 0;
   private airT = 0;
-  private reloadT = 0;
-  private reloadDur = 0;
+  private reload: ReloadState | null = null;
   private bashT = -1;
   private throwT = -1;
+  /** >= 0 while the throw snaps back after an interruption (death). */
+  private throwCancelT = -1;
+  /** Additive pose from the reload/throw clips, this frame. */
+  private readonly animPos = new THREE.Vector3();
+  private readonly animRot = new THREE.Vector3();
+  private adsSuppress = 0;
+
+  // off-hand (reload), throwing hand + hand-held grenade, a shotgun shell in the off-hand
+  private readonly offHand: THREE.Group;
+  private readonly shell: THREE.Group;
+  private readonly throwHand: THREE.Group;
+  private readonly grenade: THREE.Group;
+  // current clip values the hand anchors resolve against
+  private curDrop = 0;
+  private curSlide = 0;
+  private curHandle = 0;
+  private curPump = 0;
+  private curBoltBack = 0;
+  private curBoltLift = 0;
+  private readonly qTilt = new THREE.Quaternion();
+  private readonly qTmp = new THREE.Quaternion();
+  private readonly vDown = new THREE.Vector3();
+  private readonly vHand = new THREE.Vector3();
+  private readonly vTmp = new THREE.Vector3();
+  private readonly eTmp = new THREE.Euler();
   private dead = false;
   private deadT = 0;
   /** Lowered behind a scope (ADS with zoom ≥ ADS.scopeZoom): tracers start at the eye instead. */
@@ -206,11 +386,20 @@ export class Viewmodel {
 
   constructor(private readonly ctx: GameContext) {
     this.root.name = 'viewmodel';
+    this.root.userData.viewmodel = this; // debug handle (console / headless captures)
     this.root.position.copy(VM_BASE);
     this.root.scale.setScalar(VM_SCALE);
     this.root.add(this.pivot);
 
     this.buildArm();
+    this.offHand = this.buildHand('vmOffHand', new THREE.Vector3(-0.6, -0.65, 0.45));
+    this.pivot.add(this.offHand);
+    this.shell = this.buildShell();
+    this.offHand.add(this.shell);
+    this.throwHand = this.buildHand('vmThrowHand', new THREE.Vector3(-0.2, -0.8, 0.55));
+    this.root.add(this.throwHand);
+    this.grenade = this.buildGrenade();
+    this.root.add(this.grenade);
 
     // muzzle flash (§11): a flat 4-point star at lum 6.5 in the element tint, a pinpoint core and
     // a short thin forward spike; small, so bloom makes the glow rather than the geometry
@@ -284,6 +473,62 @@ export class Viewmodel {
     this.pivot.add(group);
   }
 
+  /**
+   * Off-hand: origin = the palm's contact point (the fist hangs below it), sleeve running off-screen
+   * along sleeveDir. Hidden until a clip uses it.
+   */
+  private buildHand(name: string, sleeveDir: THREE.Vector3): THREE.Group {
+    const group = new THREE.Group();
+    group.name = name;
+    const parts = new Parts(group, this.persistentGeoms);
+    const glove = this.toonMat(GLOVE);
+    const sleeve = this.toonMat(SLEEVE);
+    parts.box(0.085, 0.07, 0.1, glove, -0.005, -0.04, 0.01); // fist / palm
+    parts.box(0.028, 0.026, 0.06, glove, 0.04, -0.012, -0.012); // thumb
+    const dir = sleeveDir.clone().normalize();
+    const wrist = new THREE.Vector3(-0.01, -0.06, 0.06);
+    const q = new THREE.Quaternion().setFromUnitVectors(AXIS_Z, dir);
+    const cuff = parts.cyl(0.05, 0.05, glove, 0, 0, 0, 10);
+    cuff.quaternion.copy(q);
+    cuff.position.copy(wrist).addScaledVector(dir, 0.02);
+    const len = 0.55;
+    const arm = parts.cyl(0.044, len, sleeve, 0, 0, 0, 10, 0.052);
+    arm.quaternion.copy(q);
+    arm.position.copy(wrist).addScaledVector(dir, 0.04 + len / 2);
+    group.visible = false;
+    return group;
+  }
+
+  /** Shotgun shell held in the off-hand palm (along the tube axis). */
+  private buildShell(): THREE.Group {
+    const g = new THREE.Group();
+    g.name = 'vmShell';
+    const parts = new Parts(g, this.persistentGeoms);
+    parts.cyl(0.013, 0.05, this.toonMat(PALETTE.HAZARD_PAINT), 0, 0, 0, 8);
+    parts.cyl(0.0145, 0.012, this.toonMat(STEEL), 0, 0, 0.028, 8);
+    g.position.set(0, 0.012, 0);
+    g.visible = false;
+    return g;
+  }
+
+  /** The hand-held grenade: the world grenade's sphere + fuse cap + spark, at hand scale. */
+  private buildGrenade(): THREE.Group {
+    const g = new THREE.Group();
+    g.name = 'vmGrenade';
+    const parts = new Parts(g, this.persistentGeoms);
+    const r = 0.055;
+    parts.sphere(r, this.toonMat(GRENADE_BODY), 0, 0, 0, 12);
+    const capGeo = new THREE.CylinderGeometry(0.02, 0.022, 0.026, 8);
+    this.persistentGeoms.push(capGeo);
+    const cap = new THREE.Mesh(capGeo, this.toonMat(GRENADE_CAP));
+    cap.position.y = r + 0.006;
+    cap.castShadow = false;
+    g.add(cap);
+    parts.sphere(0.012, this.glowMat(GRENADE_SPARK, 2.5), 0, r + 0.03, 0, 6);
+    g.visible = false;
+    return g;
+  }
+
   /** Show equipped gloves on the first-person hand (null = the plain default glove). */
   setGloves(def: GearDef | null): void {
     if ((this.gloveModel?.def.id ?? null) === (def?.id ?? null)) return;
@@ -301,7 +546,7 @@ export class Viewmodel {
   setWeapon(def: WeaponDef | null, animate: boolean): void {
     if (def === this.target && (this.swapPhase !== 'none' || def === this.current)) return;
     this.target = def;
-    this.reloadDur = 0;
+    this.cancelReload();
     if (!animate || !this.current || !this.hasModel) {
       this.applyTarget();
       this.swapPhase = 'raise';
@@ -316,6 +561,9 @@ export class Viewmodel {
 
   private applyTarget(): void {
     const def = this.target;
+    // a reload snapping back finishes now; one started mid-swap re-binds to the new gun below
+    if (this.reload && (this.reload.cancelT >= 0 || !def)) this.endReload();
+    else if (this.reload?.rig) restoreRig(this.reload.rig);
     this.disposeModel();
     this.current = def;
     if (!def) {
@@ -343,6 +591,7 @@ export class Viewmodel {
     this.flashMat.color.setHex(fc).multiplyScalar(glowLum(fc, 6.5, 12));
     this.flashLight.color.setHex(fc);
     this.hasModel = true;
+    this.bindReload();
   }
 
   private disposeModel(): void {
@@ -369,26 +618,188 @@ export class Viewmodel {
     this.flashLight.intensity = FLASH_LIGHT_INTENSITY;
   }
 
+  /**
+   * Play the current archetype's reload over `duration` seconds (the weapon system's reloadTime x
+   * stats). The gun parts' current transforms are the rest pose the clip returns to.
+   */
   startReload(duration: number): void {
-    this.reloadDur = Math.max(0.05, duration);
-    this.reloadT = 0;
+    this.endReload();
+    this.reload = { t: 0, dur: Math.max(0.05, duration), u: 0, cancelT: -1, clip: null, rig: null };
+    this.bindReload();
   }
 
+  /** Interrupt the reload (swap, death, ...): the parts and the hand snap back over 0.1 s. */
   cancelReload(): void {
-    this.reloadDur = 0;
+    if (this.reload && this.reload.cancelT < 0) this.reload.cancelT = 0;
+  }
+
+  /** True while a reload clip (or its snap-back) is playing. */
+  get reloading(): boolean {
+    return !!this.reload;
+  }
+
+  /** True while the grenade throw clip (or its snap-back) is playing. */
+  get throwing(): boolean {
+    return this.throwT >= 0;
   }
 
   bash(): void {
     this.bashT = 0;
   }
 
+  /** Grenade throw: the gun dips away, the off-hand winds up and releases at THROW_RELEASE. */
   throwAnim(): void {
     this.throwT = 0;
+    this.throwCancelT = -1;
+  }
+
+  /** Interrupt the throw: everything snaps back over 0.1 s. */
+  cancelThrow(): void {
+    if (this.throwT >= 0 && this.throwCancelT < 0) this.throwCancelT = 0;
   }
 
   setDead(dead: boolean): void {
     this.dead = dead;
-    if (!dead) this.deadT = 0;
+    if (dead) {
+      this.cancelReload();
+      this.cancelThrow();
+    } else this.deadT = 0;
+  }
+
+  private bindReload(): void {
+    const r = this.reload;
+    if (!r) return;
+    if (!this.model || !this.current) {
+      r.clip = null;
+      r.rig = null;
+      return;
+    }
+    r.rig = buildRig(this.model, this.current.archetype);
+    r.clip = reloadClip(this.current.archetype, r.dur);
+  }
+
+  private endReload(): void {
+    if (this.reload?.rig) restoreRig(this.reload.rig);
+    this.reload = null;
+    this.offHand.visible = false;
+    this.shell.visible = false;
+    this.curDrop = this.curSlide = this.curHandle = this.curPump = this.curBoltBack = this.curBoltLift = 0;
+  }
+
+  private addPose(tr: PoseTracks, t: number, w: number): void {
+    this.animPos.x += sample(tr.px, t) * w;
+    this.animPos.y += sample(tr.py, t) * w;
+    this.animPos.z += sample(tr.pz, t) * w;
+    this.animRot.x += sample(tr.rx, t) * w;
+    this.animRot.y += sample(tr.ry, t) * w;
+    this.animRot.z += sample(tr.rz, t) * w;
+  }
+
+  /** Current (animated) rig point an off-hand key is relative to. */
+  private readonly resolveAnchor = (a: Anchor, out: THREE.Vector3): THREE.Vector3 => {
+    const rig = this.reload?.rig;
+    switch (a) {
+      case 'mag':
+        if (rig?.magBottom) {
+          return out.copy(rig.magBottom).sub(rig.magHinge).applyQuaternion(this.qTilt).add(rig.magHinge)
+            .addScaledVector(this.vDown, this.curDrop);
+        }
+        break;
+      case 'slide':
+        if (rig?.slideAt) return out.copy(rig.slideAt).setZ(rig.slideAt.z + this.curSlide);
+        break;
+      case 'handle':
+        if (rig?.handleAt) return out.copy(rig.handleAt).setZ(rig.handleAt.z + this.curHandle);
+        break;
+      case 'pump':
+        if (rig?.pumpAt) return out.copy(rig.pumpAt).setZ(rig.pumpAt.z + this.curPump);
+        break;
+      case 'bolt':
+        if (rig?.knob && rig.bolt.length) {
+          const b = rig.bolt[0].obj;
+          return out.copy(rig.knob).applyQuaternion(b.quaternion).add(b.position);
+        }
+        break;
+      case 'port':
+        if (rig?.port) return out.copy(rig.port);
+        break;
+      default:
+        break;
+    }
+    return out.copy(OFF_HAND_PARK);
+  };
+
+  /** Pose the rig at clip time u, blended by w (1 = full clip, 0 = rest; < 1 while snapping back). */
+  private applyReload(r: ReloadState, u: number, w: number): void {
+    const { clip, rig } = r;
+    if (!clip || !rig) return;
+    // magazine: rock about the top-front hinge, then travel along its (rocked) down axis
+    this.curDrop = sample(clip.magDrop, u) * w;
+    this.qTilt.setFromAxisAngle(AXIS_X, sample(clip.magTilt, u) * w);
+    this.vDown.copy(rig.magDown).applyQuaternion(this.qTilt);
+    const magHidden = w > 0.5 && inSpans(clip.magHidden, u);
+    for (const p of rig.mag) {
+      p.obj.position.copy(p.pos).sub(rig.magHinge).applyQuaternion(this.qTilt).add(rig.magHinge).addScaledVector(this.vDown, this.curDrop);
+      p.obj.quaternion.copy(this.qTilt).multiply(p.quat);
+      p.obj.visible = p.visible && !magHidden;
+    }
+    // sliding parts: rear travel along +z; the sniper bolt also lifts about the bore axis
+    this.curSlide = sample(clip.slide, u) * w;
+    this.curHandle = sample(clip.handle, u) * w;
+    this.curPump = sample(clip.pump, u) * w;
+    this.curBoltBack = sample(clip.boltBack, u) * w;
+    this.curBoltLift = sample(clip.boltLift, u) * w;
+    for (const p of rig.slide) p.obj.position.copy(p.pos).setZ(p.pos.z + this.curSlide);
+    for (const p of rig.handle) p.obj.position.copy(p.pos).setZ(p.pos.z + this.curHandle);
+    for (const p of rig.pump) p.obj.position.copy(p.pos).setZ(p.pos.z + this.curPump);
+    for (const p of rig.bolt) {
+      p.obj.position.copy(p.pos).setZ(p.pos.z + this.curBoltBack);
+      p.obj.quaternion.copy(p.quat).multiply(this.qTmp.setFromAxisAngle(AXIS_Z, this.curBoltLift));
+    }
+    this.addPose(clip.gun, u, w);
+    this.adsSuppress = Math.max(this.adsSuppress, w * clamp(Math.min(u / 0.08, (1 - u) / 0.1), 0, 1));
+    // off-hand follows its anchors; parks below the screen as w -> 0
+    sampleHand(clip.hand, u, this.resolveAnchor, this.vHand);
+    this.offHand.position.copy(OFF_HAND_PARK).lerp(this.vHand, w);
+    const hr = clip.handRot;
+    this.offHand.rotation.set(sample(hr?.rx, u) * w, sample(hr?.ry, u) * w, sample(hr?.rz, u) * w);
+    this.offHand.visible = true;
+    this.shell.visible = w > 0.5 && inSpans(clip.shells, u);
+  }
+
+  private throwHandAt(t: number, w: number, pos: THREE.Vector3, rot: THREE.Euler): void {
+    const h = THROW_CLIP.hand;
+    this.vTmp.set(sample(h.px, t), sample(h.py, t), sample(h.pz, t));
+    pos.lerpVectors(THROW_HAND_PARK, this.vTmp, w);
+    rot.set(sample(h.rx, t) * w, sample(h.ry, t) * w, sample(h.rz, t) * w);
+  }
+
+  private applyThrow(t: number, w: number): void {
+    this.addPose(THROW_CLIP.gun, t, w);
+    this.throwHandAt(t, w, this.throwHand.position, this.throwHand.rotation);
+    this.throwHand.visible = true;
+    const g = this.grenade;
+    if (t < THROW_RELEASE) {
+      g.position.copy(GRENADE_IN_HAND).applyEuler(this.throwHand.rotation).add(this.throwHand.position);
+      g.rotation.set(0, 0, 0);
+      g.visible = w > 0.5;
+    } else {
+      // released: a short ballistic arc toward the camera forward, then the world grenade takes over
+      const ft = t - THROW_RELEASE;
+      this.throwHandAt(THROW_RELEASE, 1, g.position, this.eTmp);
+      g.position.add(this.vHand.copy(GRENADE_IN_HAND).applyEuler(this.eTmp));
+      g.position.addScaledVector(THROW_CLIP.velocity, ft);
+      g.position.y += 0.5 * THROW_CLIP.gravity * ft * ft;
+      g.rotation.set(-ft * 14, ft * 3, 0);
+      g.visible = w > 0.5 && ft < THROW_CLIP.flight;
+    }
+  }
+
+  private endThrow(): void {
+    this.throwT = -1;
+    this.throwCancelT = -1;
+    this.throwHand.visible = false;
+    this.grenade.visible = false;
   }
 
   /** World position of the muzzle (falls back to just in front of the camera). */
@@ -443,17 +854,32 @@ export class Viewmodel {
     this.kickRot -= this.kickRot * damp(11, dt);
     this.kickRoll -= this.kickRoll * damp(10, dt);
 
-    // reload: drop + rotate, with a little mag-slap jolt
-    let drop = 0;
-    let jolt = 0;
-    if (this.reloadDur > 0) {
-      this.reloadT += dt;
-      const p = this.reloadT / this.reloadDur;
-      if (p >= 1) {
-        this.reloadDur = 0;
+    // reload / throw clips: additive pose + rig parts (snap back over ANIM_CANCEL_TIME when cut)
+    this.animPos.set(0, 0, 0);
+    this.animRot.set(0, 0, 0);
+    this.adsSuppress = 0;
+    const r = this.reload;
+    if (r) {
+      if (r.cancelT >= 0) {
+        r.cancelT += dt;
+        if (r.cancelT >= ANIM_CANCEL_TIME) this.endReload();
+        else this.applyReload(r, r.u, 1 - smooth(r.cancelT / ANIM_CANCEL_TIME));
       } else {
-        drop = p < 0.2 ? smooth(p / 0.2) : p > 0.8 ? smooth((1 - p) / 0.2) : 1;
-        jolt = Math.exp(-(((p - 0.55) / 0.06) ** 2));
+        r.t += dt;
+        r.u = r.t / r.dur;
+        if (r.u >= 1) this.endReload();
+        else this.applyReload(r, r.u, 1);
+      }
+    }
+    if (this.throwT >= 0) {
+      if (this.throwCancelT >= 0) {
+        this.throwCancelT += dt;
+        if (this.throwCancelT >= ANIM_CANCEL_TIME) this.endThrow();
+        else this.applyThrow(this.throwT, 1 - smooth(this.throwCancelT / ANIM_CANCEL_TIME));
+      } else {
+        this.throwT += dt;
+        if (this.throwT >= THROW_TIME) this.endThrow();
+        else this.applyThrow(this.throwT, 1);
       }
     }
 
@@ -466,35 +892,30 @@ export class Viewmodel {
       else bash = p < 0.3 ? smooth(p / 0.3) : 1 - smooth((p - 0.3) / 0.7);
     }
 
-    // grenade throw (gun dips out of the way)
-    let throwLower = 0;
-    if (this.throwT >= 0) {
-      this.throwT += dt;
-      const p = this.throwT / THROW_TIME;
-      if (p >= 1) this.throwT = -1;
-      else throwLower = Math.sin(p * Math.PI) * 0.7;
-    }
-
     // death: lower the gun out of view
     if (this.dead) this.deadT = Math.min(1, this.deadT + dt * 2.5);
     else this.deadT = Math.max(0, this.deadT - dt * 4);
     const deadLower = smooth(this.deadT);
 
-    const lower = Math.max(swapLower, throwLower, deadLower, scoped ? aim : 0);
+    // a reload visually leaves the sights (and returns at its end) even if aimBlend lingers
+    const aimVis = aim * (1 - this.adsSuppress);
+    const lower = Math.max(swapLower, deadLower, scoped ? aimVis : 0);
     // sights pose (not for scopes: those drop away and the HUD draws the scope)
-    const sights = scoped ? 0 : aim;
+    const sights = scoped ? 0 : aimVis;
     this.scopedDown = scoped && aim > 0.5;
     const sightY = SIGHT_Y[this.current?.archetype ?? 'rifle'] ?? SIGHT_Y.rifle;
 
+    const ap = this.animPos;
+    const ar = this.animRot;
     this.pivot.position.set(
-      this.swayX + bx - bash * 0.1 - this.sprintT * 0.03 + sights * ADS_X,
-      this.swayY + by - lower * 0.45 - drop * 0.12 - this.sprintT * 0.05 + this.airT * 0.015 * steady + jolt * 0.025 + sights * (ADS_Y - sightY),
-      this.kickZ * steady - bash * 0.32 + drop * 0.05 + sights * ADS_PULL,
+      this.swayX + bx - bash * 0.1 - this.sprintT * 0.03 + sights * ADS_X + ap.x,
+      this.swayY + by - lower * 0.45 - this.sprintT * 0.05 + this.airT * 0.015 * steady + sights * (ADS_Y - sightY) + ap.y,
+      this.kickZ * steady - bash * 0.32 + sights * ADS_PULL + ap.z,
     );
     this.pivot.rotation.set(
-      this.kickRot - lower * 0.9 - drop * 0.35 - this.sprintT * 0.25 + jolt * 0.12 + this.airT * 0.04,
-      this.swayX * 2.5 + this.sprintT * 0.55 + bash * 0.45,
-      -this.swayX * 1.5 + drop * 0.8 + bash * 0.9 + this.kickRoll,
+      this.kickRot - lower * 0.9 - this.sprintT * 0.25 + this.airT * 0.04 + ar.x,
+      this.swayX * 2.5 + this.sprintT * 0.55 + bash * 0.45 + ar.y,
+      -this.swayX * 1.5 + bash * 0.9 + this.kickRoll + ar.z,
     );
 
     this.gloveModel?.animate(this.ctx.time.elapsed);
