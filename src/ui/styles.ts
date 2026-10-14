@@ -480,7 +480,7 @@ const CSS = /* css */ `
 @media (max-height: 800px) { .sb-cp-in { padding: 24px 32px; gap: 16px; } .sb-ccard .cb { margin: 6px 0; } }
 
 /* class active chip (Q) above the vitals panel, right side */
-.sb-qchip { position: absolute; right: 0; top: -48px; height: 32px; display: flex; align-items: center; padding: 0 12px 0 4px; background: var(--panel); border-top: 2px solid var(--bone); font-family: var(--mono); font-weight: 700; font-size: 12px; letter-spacing: .12em; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.sb-qchip { position: absolute; right: 0; top: -48px; height: 32px; display: flex; align-items: center; padding: 0 12px 0 4px; background: var(--panel); border-top: 2px solid var(--bone); font-family: var(--mono); font-weight: 700; font-size: 12px; letter-spacing: .12em; white-space: nowrap; }
 .sb-qchip .sb-key { margin: 0 8px 0 0; min-width: 20px; height: 20px; }
 .sb-qchip.cd { color: var(--label); }
 .sb-qchip.ready { background: var(--bone); color: var(--panel-solid); }

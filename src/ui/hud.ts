@@ -694,13 +694,13 @@ export function createHudWidgets(ctx: GameContext, root: HTMLElement, pit?: PitS
     const act = (prog as unknown as { activeAbility?: { def: { name: string }; unlocked: boolean; ready: boolean; active: boolean; cooldownLeft: number; activeLeft: number } | null } | undefined)?.activeAbility;
     if (act && act.unlocked) {
       const st = act.active ? 'on' : act.ready ? 'ready' : 'cd';
-      const txt = act.active ? `${act.def.name.toUpperCase()} · ${Math.ceil(act.activeLeft)} S`
-        : act.ready ? `${act.def.name.toUpperCase()} · READY` : `${act.def.name.toUpperCase()} · ${Math.ceil(act.cooldownLeft)} S`;
+      const txt = act.active ? `ACTIVE ${Math.ceil(act.activeLeft)} S` : act.ready ? 'READY' : `CD ${Math.ceil(act.cooldownLeft)} S`;
       const k = `${st}|${txt}`;
       if (k !== qKey) {
         qKey = k;
         qChip.className = `sb-qchip ${st}`;
         qText.textContent = txt;
+        qChip.title = act.def.name;
       }
     } else if (qKey !== '') {
       qKey = '';
