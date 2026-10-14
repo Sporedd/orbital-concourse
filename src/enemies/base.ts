@@ -11,6 +11,7 @@ import type {
   BossKind, DamageCause, DamageOpts, Element, Enemy, EnemyState, MobKind, PlayerState, RayHit, StatusEffect, Vec3,
 } from '@/core/types';
 import { ELEMENT_COLORS } from '@/core/types';
+import { LUM, PALETTE, glowLum } from '@/rendering/style';
 import type { EnemyEnv } from './common';
 import { hitPlayer, noRaycast, turnTowards } from './common';
 import type { Rig } from './models';
@@ -57,8 +58,8 @@ const _probeDir = new THREE.Vector3();
 const _probeOrigin = new THREE.Vector3();
 const _next = new THREE.Vector3();
 const _head = new THREE.Vector3();
-// hit flash: BONE at lum ~1.2 for a few frames (not a white-out)
-const WHITE = new THREE.Color(0xeceae4).multiplyScalar(1.4);
+// hit flash: emissive BONE at lum 1.2 for a few frames (art spec §7: not a white-out)
+const WHITE = new THREE.Color(PALETTE.BONE).multiplyScalar(glowLum(PALETTE.BONE, LUM.seam, 4));
 const FROZEN_TINT = new THREE.Color(0xbff4ff);
 const FIRE_TINT = new THREE.Color(ELEMENT_COLORS.fire);
 const SHOCK_TINT = new THREE.Color(ELEMENT_COLORS.shock);
@@ -656,7 +657,7 @@ export abstract class BaseEnemy<S extends EnemySimState = EnemySimState> impleme
     const root = this.rig.root;
     root.position.copy(this.position);
     root.rotation.set(0, s.yaw, 0);
-    root.scale.setScalar(1);
+    root.scale.setScalar(this.rig.scale);
     if (s.frozen <= 0) {
       if (s.alive) this.walkPhase += Math.hypot(this.velocity.x, this.velocity.z) * dt * this.stride;
       this.animate(dt);
@@ -676,7 +677,7 @@ export abstract class BaseEnemy<S extends EnemySimState = EnemySimState> impleme
     if (t > sinkStart) {
       const u = Math.min(1, (t - sinkStart) / (this.deathDuration - sinkStart));
       root.position.y -= u * this.height * 0.4;
-      root.scale.setScalar(Math.max(0.05, 1 - 0.75 * u));
+      root.scale.setScalar(this.rig.scale * Math.max(0.05, 1 - 0.75 * u));
     }
   }
 

@@ -31,8 +31,8 @@ export interface ArtilleryState extends EnemySimState {
 }
 
 const CFG: EnemyConfig = {
-  kind: 'artillery', isBoss: true, radius: 1.8, height: 3.8, baseHealth: 1600, mass: 10,
-  burstColor: 0xff2238, centerHeight: 2.3,
+  kind: 'artillery', isBoss: true, radius: 2.35, height: 4.95, baseHealth: 1600, mass: 10,
+  burstColor: 0xff2238, centerHeight: 3.0,
 };
 const SHELL_RADIUS = 3.5;
 const SHELL_DAMAGE = 20;
@@ -55,7 +55,7 @@ export class Artillery extends BossBase<ArtilleryState> {
     super(env, CFG, buildArtillery(env.ctx.materials), pos, tier, {
       mode: 'walk', timer: 0, barrageTimer: 3, shellsLeft: 0, shellTimer: 0, turnTimer: 3 + rng() * 2,
       turning: 0, stompCd: 2, strafeDir: rng() < 0.5 ? -1 : 1, strafeTimer: 4, recoil: 0,
-    }, 0.9);
+    }, 1.17);
     this.stride = 0.9;
   }
 

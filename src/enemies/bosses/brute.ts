@@ -28,8 +28,8 @@ export interface BruteState extends EnemySimState {
 }
 
 const CFG: EnemyConfig = {
-  kind: 'brute', isBoss: true, radius: 1.4, height: 3.7, baseHealth: 1400, mass: 8,
-  burstColor: 0xff2238, centerHeight: 2.3,
+  kind: 'brute', isBoss: true, radius: 1.9, height: 5.0, baseHealth: 1400, mass: 8,
+  burstColor: 0xff2238, centerHeight: 3.1,
 };
 const WALK = 4;
 const CHARGE_SPEED = 18;
@@ -53,7 +53,7 @@ export class Brute extends BossBase<BruteState> {
     super(env, CFG, buildBrute(env.ctx.materials), pos, tier, {
       mode: 'walk', timer: 0, windup: 0.6, chargeCd: 3, slamCd: 1, chargeDir: { x: 0, y: 0, z: 1 },
       chargeHits: [], aftershock: -1,
-    }, 0.65);
+    }, 0.88);
     this.stride = 1.1;
   }
 
@@ -121,7 +121,7 @@ export class Brute extends BossBase<BruteState> {
         const ratio = this.moveAndCollide(dt);
         this.chargeContact();
         // wall probe straight ahead
-        _probeO.set(this.position.x, this.position.y + 1.0, this.position.z);
+        _probeO.set(this.position.x, this.position.y + 1.35, this.position.z);
         _probe.set(s.chargeDir.x, 0, s.chargeDir.z);
         const hit = ctx.world.raycast(_probeO, _probe, this.radius + 0.5);
         if ((hit && Math.abs(hit.normal.y) < 0.7) || (ratio < 0.45 && sm > 0.2)) {
@@ -213,7 +213,7 @@ export class Brute extends BossBase<BruteState> {
   private chargeContact(): void {
     const s = this.state;
     this.centerPoint(_chest);
-    _chest.y = this.position.y + 1.2;
+    _chest.y = this.position.y + 1.6;
     for (const p of this.env.ctx.players.list()) {
       if (!p.alive || s.chargeHits.includes(p.id)) continue;
       if (playerCapsuleDistance(p, _chest) < this.radius + 0.3) {
@@ -234,7 +234,7 @@ export class Brute extends BossBase<BruteState> {
     this.setAnim('stunned');
     const front = new THREE.Vector3(
       this.position.x + s.chargeDir.x * this.radius,
-      this.position.y + 2,
+      this.position.y + 2.7,
       this.position.z + s.chargeDir.z * this.radius,
     );
     ctx.fx.burst(front, 0x8e8c86, 28);

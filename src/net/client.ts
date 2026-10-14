@@ -17,6 +17,7 @@ import type {
 import {
   avatarWeaponW, dec, enc, q1, q2, qv, stubWeapon, weaponStatsW,
   type AoeW, type ClientMsg, type ClientTickMsg, type EvW, type FireW, type FxW, type HitW, type PlayerW, type SnapMsg,
+  sanitizeLoadout,
 } from './protocol';
 import { MirrorEnemyRegistry, type ClaimSink, type MirrorEnemy } from './enemyMirror';
 import { LootMirror } from './lootMirror';
@@ -24,6 +25,7 @@ import { Avatar } from './avatar';
 import { ClockSync, SampleBuffer, makeSample, nowSeconds, INTERP_DELAY } from './interp';
 import { replayFx, reviveLocalPlayer } from './host';
 import { effectiveDamageMult, gearExtras, getStats } from '@/player/shared';
+import type { Loadout } from '@/gear/types';
 
 export const CLIENT_TICK_HZ = 30;
 const MAX_FX_UP = 48;
@@ -32,6 +34,9 @@ interface RemoteView {
   avatar: Avatar | null;
   buf: SampleBuffer;
   seen: number;
+  /** Loadout version + gear as last received (SnapMsg.ld), for the avatar. */
+  lv: number;
+  loadout: Loadout;
 }
 
 export interface ClientRuntimeOptions {
@@ -58,6 +63,8 @@ export class ClientRuntime {
   private tickAcc = 0;
   private snapGen = 0;
   private replaying = false;
+  /** Send the local loadout in the next tick (first tick after welcome, then on gear:changed). */
+  private loadoutDirty = true;
   private suppressLocal = false;
   /** Outbox for the next tick. */
   private pendingHits: HitW[] = [];
@@ -120,6 +127,11 @@ export class ClientRuntime {
 
   // ---- id mapping (host ids ↔ local ids) -------------------------------------------
   /** Host-side player id → id as seen locally. */
+  /** The gear a remote player (local id) wears, as last received. */
+  remoteLoadout(id: string): Readonly<Loadout> | undefined {
+    return this.remotes.get(id)?.loadout;
+  }
+
   toLocal(id: string | undefined): string | undefined {
     if (id === undefined) return undefined;
     if (id === this.myHostPid) return this.localId;
@@ -158,6 +170,9 @@ export class ClientRuntime {
         sm: q2(this.spreadMult(this.ctx.player)),
         h: this.pendingHits.splice(0),
       });
+    }));
+    this.offs.push(ev.on('gear:changed', (e) => {
+      if (e.playerId === this.localId) this.loadoutDirty = true;
     }));
     this.offs.push(ev.on('player:healed', (e) => {
       if (e.playerId === this.localId && !this.suppressLocal) this.heal += e.amount;
@@ -207,6 +222,7 @@ export class ClientRuntime {
       this.hostPid = String(w.hostPid);
       this.clock.observe(Number(w.tm) || 0);
       this.welcomed = true;
+      this.loadoutDirty = true;
     } else if (m.t === 's') {
       this.applySnapshot(msg as SnapMsg);
     }
@@ -236,6 +252,16 @@ export class ClientRuntime {
     this.loot.apply(s.la, s.lr);
     for (const e of s.ev ?? []) this.applyEvent(e);
     this.applyPlayers(s.tm, s.pl);
+    for (const e of s.ld ?? []) {
+      if (!e || typeof e !== 'object') continue;
+      const id = this.toLocal(e.i);
+      if (!id || id === this.localId) continue;
+      const rv = this.remotes.get(id);
+      if (!rv) continue;
+      rv.lv = Number(e.v) || 0;
+      rv.loadout = sanitizeLoadout(e.l);
+      rv.avatar?.setLoadout(rv.loadout);
+    }
     if (s.fx?.length) {
       this.replaying = true;
       try {
@@ -262,7 +288,7 @@ export class ClientRuntime {
       }
       let rv = this.remotes.get(id);
       if (!rv) {
-        rv = { avatar: this.opts.avatars === false ? null : new Avatar(this.ctx, id, w.n), buf: new SampleBuffer(16), seen: gen };
+        rv = { avatar: this.opts.avatars === false ? null : new Avatar(this.ctx, id, w.n), buf: new SampleBuffer(16), seen: gen, lv: -1, loadout: {} };
         this.remotes.set(id, rv);
       }
       rv.seen = gen;
@@ -438,6 +464,10 @@ export class ClientRuntime {
       this.heal = 0;
     }
     if (this.selfDmg.length) msg.sd = this.selfDmg.splice(0);
+    if (this.loadoutDirty) {
+      msg.ld = { ...p.loadout };
+      this.loadoutDirty = false;
+    }
     this.send(msg);
   }
 

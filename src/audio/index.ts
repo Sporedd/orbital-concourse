@@ -10,6 +10,7 @@
  */
 import type * as THREE from 'three';
 import type { AudioSystem, GameContext, MusicState, RoundPhase, SfxName } from '@/core/types';
+import { HYPE_TIERS } from '@/standing/types';
 import { Wind } from './ambience';
 import { AudioEngine, DEFAULT_VOLUMES, spatialize, type BusName } from './engine';
 import { Music } from './music';
@@ -233,6 +234,20 @@ export function createAudio(ctx: GameContext): AudioSystem {
   ev.on('round:started', () => play('round_start'));
   ev.on('round:cleared', () => play('round_clear'));
   ev.on('round:phase', (p) => setMusic(PHASE_MUSIC[p.phase] ?? 'menu'));
+
+  // Standing / crowd (src/standing/INTEGRATION.md §5f), on existing sounds until the crowd synth exists:
+  // rank-up = levelup (higher for a league-up), hype tier up = a roar (full roar at ROARING),
+  // tier down = ui_open pitched down, crowd gift = round_clear, boos = a low player_hurt.
+  ev.on('standing:rank', (e) => play('levelup', { pitch: e.leagueUp ? 1.3 : 1.12 }));
+  ev.on('hype:changed', (e) => {
+    if (!e.tierChanged) return;
+    const up = HYPE_TIERS.indexOf(e.tier) > HYPE_TIERS.indexOf(e.previousTier);
+    if (!up) play('ui_open', { volume: 0.5, pitch: 0.7 });
+    else if (e.tier === 'roaring') play('boss_roar', { volume: 0.4, pitch: 1.4 });
+    else play('boss_roar', { volume: 0.2, pitch: 1.8 });
+  });
+  ev.on('hype:gift', () => play('round_clear', { volume: 0.7 }));
+  ev.on('hype:boo', () => play('player_hurt', { volume: 0.3, pitch: 0.6 }));
   ev.on('ui:screen', (p) => {
     if (p.screen === 'start') setMusic('menu');
   });

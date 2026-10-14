@@ -32,7 +32,7 @@ export class RemotePlayer implements PlayerState {
   readonly weapons: (WeaponDef | null)[] = [null, null];
   activeSlot = 0;
   onGround = true;
-  /** Equipped gear for avatars. Not on the wire yet (see docs/INTEGRATION_NOTES.md): stays empty. */
+  /** Equipped gear, from the client's tick (`ld`, validated); the host avatar wears it. */
   loadout: Readonly<Loadout> = {};
   /** Seconds since the last input tick (stale connection detection). */
   silence = 0;

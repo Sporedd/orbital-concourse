@@ -7,6 +7,8 @@
 import * as THREE from 'three';
 import type { GameContext, WeaponArchetype } from '@/core/types';
 import { RARITY_COLORS, type Rarity } from '@/core/types';
+import { buildGearModel, type GearModel } from '@/gear/models';
+import { GEAR_SLOTS, type GearSlot, type Loadout } from '@/gear/types';
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const SPHERE = new THREE.SphereGeometry(1, 12, 9);
@@ -49,6 +51,10 @@ export class Avatar {
   private readonly muzzle = new THREE.Object3D();
   private readonly legs: THREE.Group[] = [];
   private readonly arms: THREE.Group[] = [];
+  /** Gear anchors (src/gear/models.ts conventions, the avatar faces -Z so each is turned by π). */
+  private readonly gearAnchors: { helm: THREE.Group; chest: THREE.Group; trinket: THREE.Group; wrists: THREE.Group[]; ankles: THREE.Group[] };
+  private readonly gear = new Map<GearSlot, { id: string; model: GearModel }>();
+  private gearT = 0;
   private readonly flashMesh: THREE.Mesh;
   private readonly owned: THREE.Material[] = [];
   private gunMats: THREE.Material[] = [];
@@ -131,6 +137,26 @@ export class Avatar {
       this.aim.add(arm);
       this.arms.push(arm);
     }
+    // gear anchors: head centre, torso centre, beside the hip, wrists (hands hang along the arm,
+    // back of the hand up) and ankles. Scales bridge the avatar's chunkier proportions to the
+    // paper-doll mannequin the gear is modelled on.
+    const anchor = (parent: THREE.Object3D, p: [number, number, number], scale: number, rot?: [number, number, number]) => {
+      const g = new THREE.Group();
+      g.position.set(p[0], p[1], p[2]);
+      g.rotation.order = 'YXZ';
+      if (rot) g.rotation.set(rot[0], rot[1], rot[2]);
+      else g.rotation.y = Math.PI;
+      g.scale.setScalar(scale);
+      parent.add(g);
+      return g;
+    };
+    this.gearAnchors = {
+      helm: anchor(this.head, [0, 0.13, 0], 1.5),
+      chest: anchor(this.body, [0, 0.36, 0], 1.15),
+      trinket: anchor(this.body, [0.32, 0.05, -0.05], 1.15),
+      wrists: this.arms.map((arm) => anchor(arm, [0, 0, -0.3], 1.3, [-Math.PI / 2, Math.PI, 0])),
+      ankles: this.legs.map((leg) => anchor(leg, [0, -0.79, -0.02], 1.4)),
+    };
     this.gun.position.set(0.04, 0.02, -0.42);
     this.aim.add(this.gun);
     this.gun.add(this.muzzle);
@@ -182,6 +208,39 @@ export class Avatar {
     this.muzzle.position.set(0, 0.015, -len / 2 - barrel - 0.03);
   }
 
+  /** Wear a loadout (co-op: the other peer's equipped gear). Unchanged pieces are kept. */
+  setLoadout(loadout: Readonly<Loadout>): void {
+    for (const slot of GEAR_SLOTS) {
+      const def = loadout[slot];
+      const cur = this.gear.get(slot);
+      if (cur && def && cur.id === def.id) continue;
+      if (cur) {
+        cur.model.dispose();
+        this.gear.delete(slot);
+      }
+      if (!def || def.slot !== slot) continue;
+      const model = buildGearModel(def, this.ctx.materials);
+      const a = this.gearAnchors;
+      if (slot === 'boots' || slot === 'gloves') {
+        const anchors = slot === 'boots' ? a.ankles : a.wrists;
+        const sides = [model.left, model.right];
+        for (let i = 0; i < 2; i++) {
+          const side = sides[i];
+          if (!side || !anchors[i]) continue;
+          side.position.set(0, 0, 0);
+          anchors[i].add(side);
+        }
+      } else {
+        a[slot].add(model);
+      }
+      // not a hitscan target, like the rest of the avatar
+      model.traverse((o) => { o.raycast = () => {}; });
+      model.left?.traverse((o) => { o.raycast = () => {}; });
+      model.right?.traverse((o) => { o.raycast = () => {}; });
+      this.gear.set(slot, { id: def.id, model });
+    }
+  }
+
   /** Muzzle world position (tracer origin for remote shots). */
   muzzleWorld(out: THREE.Vector3): THREE.Vector3 {
     this.root.updateMatrixWorld(true);
@@ -201,6 +260,10 @@ export class Avatar {
   /** Pose from interpolated network state; derives walk speed from motion. */
   update(dt: number, pose: AvatarPose): void {
     const r = this.root;
+    if (this.gear.size) {
+      this.gearT += dt;
+      for (const g of this.gear.values()) g.model.animate(this.gearT);
+    }
     if (this.hasLast && dt > 0) {
       const sp = Math.hypot(pose.x - this.last.x, pose.z - this.last.z) / dt;
       this.speed += (Math.min(sp, 14) - this.speed) * Math.min(1, dt * 10);
@@ -292,6 +355,8 @@ export class Avatar {
 
   dispose(): void {
     this.ctx.scene.remove(this.root);
+    for (const g of this.gear.values()) g.model.dispose();
+    this.gear.clear();
     for (const m of this.owned) m.dispose();
     for (const m of this.gunMats) m.dispose();
     this.tag?.remove();

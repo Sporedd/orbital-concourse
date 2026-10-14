@@ -17,9 +17,7 @@ export const STORAGE_MIGRATIONS: readonly (readonly [from: string, to: string, k
   ['snowbound.standing.v1', 'concourse.standing.v1'],
   ['snowbound.sponsor.v1', 'concourse.sponsor.v1'],
   ['snowbound.gear.v1', 'concourse.gear.v1'],
-  // keepOld: src/net/ui.ts (UI agent) still reads the old lobby-name key; drop the flag once it
-  // reads NET_NAME_KEY (docs/INTEGRATION_NOTES.md).
-  ['snowbound.net.name', 'concourse.net.name', true],
+  ['snowbound.net.name', 'concourse.net.name'],
 ];
 
 /** Keys that are simply dropped (session-only state). */

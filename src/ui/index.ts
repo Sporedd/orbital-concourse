@@ -11,7 +11,6 @@ import { h } from './dom';
 import { createHudWidgets } from './hud';
 import { createRunStats } from './runStats';
 import { createScreens } from './screens';
-import { installSensitivityHook } from './settings';
 import { injectStyles } from './styles';
 
 /** Grace period for pointer lock to engage after a click before we fall back to the pause screen. */
@@ -20,8 +19,6 @@ const GAMEOVER_DELAY = 1.6;
 
 export function createHud(ctx: GameContext): Hud {
   injectStyles();
-  // Interim mouse-sensitivity hook (see settings.ts): remove once the controller reads the setting.
-  installSensitivityHook(ctx.input);
   const root = h('div', 'sb', ctx.uiRoot);
 
   let screen: Screen = 'start';

@@ -2,6 +2,7 @@
  * The 25 ranks in 5 leagues (PLAN §12). Pure data + lookup helpers, no side effects.
  * threshold(i) = round(250 · i^1.6) — rank 0 (Fodder) is free, rank 24 (Eternal) ≈ 40k.
  */
+import { LEAGUE_STYLE } from '@/rendering/style';
 import type { League, LeagueDressing, LeagueId, RankDef, RankProgress } from './types';
 
 export const rankThreshold = (index: number): number => Math.round(250 * Math.pow(Math.max(0, index), 1.6));
@@ -18,7 +19,7 @@ interface LeagueSpec {
 
 const LEAGUE_SPECS: LeagueSpec[] = [
   {
-    id: 'scrap', name: 'Scrap League', accent: 0xd9641e,
+    id: 'scrap', name: 'Scrap League', accent: LEAGUE_STYLE.scrap.accent,
     dressing: {
       crowdSizeMult: 0.25, floodlights: 2, lasers: false, holoBillboards: 0, hazard: null,
       hubFloor: 'Cargo bay (deck 0)',
@@ -33,7 +34,7 @@ const LEAGUE_SPECS: LeagueSpec[] = [
     ],
   },
   {
-    id: 'iron', name: 'Iron League', accent: 0xff6a00,
+    id: 'iron', name: 'Iron League', accent: LEAGUE_STYLE.iron.accent,
     dressing: {
       crowdSizeMult: 0.5, floodlights: 4, lasers: false, holoBillboards: 1, hazard: 'vent_pulls',
       hubFloor: 'Crew deck (deck 1)',
@@ -48,7 +49,7 @@ const LEAGUE_SPECS: LeagueSpec[] = [
     ],
   },
   {
-    id: 'steel', name: 'Steel League', accent: 0xe8d400,
+    id: 'steel', name: 'Steel League', accent: LEAGUE_STYLE.steel.accent,
     dressing: {
       crowdSizeMult: 0.75, floodlights: 6, lasers: true, holoBillboards: 2, hazard: 'laser_grids',
       hubFloor: 'Officer deck (deck 2)',
@@ -63,7 +64,7 @@ const LEAGUE_SPECS: LeagueSpec[] = [
     ],
   },
   {
-    id: 'star', name: 'Star League', accent: 0x18d8ff,
+    id: 'star', name: 'Star League', accent: LEAGUE_STYLE.star.accent,
     dressing: {
       crowdSizeMult: 1, floodlights: 8, lasers: true, holoBillboards: 4, hazard: 'gravity_pulses',
       hubFloor: 'Promenade deck (deck 3)',
@@ -78,7 +79,7 @@ const LEAGUE_SPECS: LeagueSpec[] = [
     ],
   },
   {
-    id: 'void', name: 'Void League', accent: 0xa050ff,
+    id: 'void', name: 'Void League', accent: LEAGUE_STYLE.void.accent,
     dressing: {
       crowdSizeMult: 1.25, floodlights: 10, lasers: true, holoBillboards: 6, hazard: 'shrinking_ring',
       hubFloor: 'Spire (top deck)',

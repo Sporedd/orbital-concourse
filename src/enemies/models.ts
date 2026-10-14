@@ -24,8 +24,17 @@ const ENEMY_RIM = 0.38;
 /** Emissive multiplier that puts THREAT at a luminance target. */
 const threatK = (lum: number) => glowLum(THREAT, lum, 12);
 
+/**
+ * Boss rigs are built at mob proportions and scaled as a whole (art spec §7: bosses at 2.5–4×
+ * grunt height; a grunt is 1.85 m). The EnemyConfig radius/height/centerHeight, the weak-point
+ * radii and src/net/enemyMirror.ts KIND_INFO carry the same factors (keep them in sync).
+ */
+export const BOSS_SCALE = { brute: 1.35, summoner: 1.3, artillery: 1.3 } as const;
+
 export interface Rig {
   root: THREE.Group;
+  /** Uniform rig scale that the view applies to `root` every frame (1 for mobs, BOSS_SCALE for bosses). */
+  scale: number;
   /** Torso pivot (bob / lean). */
   body: THREE.Group;
   bodyBaseY: number;
@@ -67,6 +76,7 @@ export const SPHERE_GEO = SPHERE;
 
 class RigBuilder {
   readonly root = new THREE.Group();
+  scale = 1;
   body: THREE.Group = new THREE.Group();
   bodyBaseY = 0;
   head: THREE.Object3D | null = null;
@@ -115,7 +125,7 @@ class RigBuilder {
 
   finish(): Rig {
     return {
-      root: this.root, body: this.body, bodyBaseY: this.bodyBaseY, head: this.head,
+      root: this.root, scale: this.scale, body: this.body, bodyBaseY: this.bodyBaseY, head: this.head,
       legs: this.legs, arms: this.arms, parts: this.parts, mats: this.mats,
       baseEmissive: this.baseEmissive, accent: this.accent, owned: this.owned,
     };
@@ -268,6 +278,7 @@ export function buildBomber(mf: MaterialFactory): Rig {
 // ---- Brute: bulkhead torso, THREAT chest panel + visor -------------------------------
 export function buildBrute(mf: MaterialFactory): Rig {
   const b = new RigBuilder(mf);
+  b.scale = BOSS_SCALE.brute;
   // bosses sit a value step darker than mobs (ARMOUR slab, UNDERSUIT joints) so the back-rim,
   // the THREAT panel and the core light carry them: heavier, and they never read as concrete
   const fur = b.toon(ARMOUR);
@@ -318,6 +329,7 @@ export function buildBrute(mf: MaterialFactory): Rig {
 // ---- Summoner: floating obelisk, orbiting slabs, THREAT core -------------------------
 export function buildSummoner(mf: MaterialFactory): Rig {
   const b = new RigBuilder(mf);
+  b.scale = BOSS_SCALE.summoner;
   const robe = b.toon(UNDERSUIT);
   const robeDark = b.toon(STEEL_DARK);
   const trim = b.toon(ARMOUR_LIT);
@@ -362,6 +374,7 @@ export function buildSummoner(mf: MaterialFactory): Rig {
 // ---- Artillery: bunker on four legs, mortar mast, THREAT core on its back ------------
 export function buildArtillery(mf: MaterialFactory): Rig {
   const b = new RigBuilder(mf);
+  b.scale = BOSS_SCALE.artillery;
   const steel = b.toon(ARMOUR);
   const dark = b.toon(STEEL_DARK);
   const frost = b.toon(ARMOUR_LIT);

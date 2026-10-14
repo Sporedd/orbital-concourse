@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import type { EnemyEnv } from '../common';
 import { noRaycast } from '../common';
 import type { EnemyConfig, EnemySimState } from '../base';
-import { buildSummoner, RING_GEO, SPHERE_GEO } from '../models';
+import { BOSS_SCALE, buildSummoner, RING_GEO, SPHERE_GEO } from '../models';
 import { BossBase } from './boss';
 
 export interface SummonerState extends EnemySimState {
@@ -24,8 +24,8 @@ export interface SummonerState extends EnemySimState {
 }
 
 const CFG: EnemyConfig = {
-  kind: 'summoner', isBoss: true, radius: 1.0, height: 4.5, baseHealth: 1100, mass: 6,
-  burstColor: 0xff2238, centerHeight: 3.2,
+  kind: 'summoner', isBoss: true, radius: 1.3, height: 5.85, baseHealth: 1100, mass: 6,
+  burstColor: 0xff2238, centerHeight: 4.15,
 };
 const SPEED = 4;
 const NEAR = 12;
@@ -55,7 +55,7 @@ export class Summoner extends BossBase<SummonerState> {
     super(env, CFG, buildSummoner(env.ctx.materials), pos, tier, {
       mode: 'drift', timer: 0, summonTimer: 4, orbTimer: 2, driftDir: rng() < 0.5 ? -1 : 1,
       driftTimer: 3 + rng() * 2, shield: 0, shieldThreshold: 0.75,
-    }, 0.48);
+    }, 0.62);
     this.stride = 0;
 
     const mf = env.ctx.materials;
@@ -241,9 +241,9 @@ export class Summoner extends BossBase<SummonerState> {
     const shielded = s.alive && s.shield > 0;
     this.bubble.visible = shielded;
     if (shielded) {
-      this.bubble.position.set(this.position.x, this.position.y + r.body.position.y + 1.3, this.position.z);
+      this.bubble.position.set(this.position.x, this.position.y + r.body.position.y * BOSS_SCALE.summoner + 1.7, this.position.z);
       const flick = s.shield < 1 ? (Math.sin(s.age * 30) > 0 ? 1 : 0.4) : 1;
-      this.bubble.scale.setScalar(2.2 + 0.08 * Math.sin(s.age * 8));
+      this.bubble.scale.setScalar(2.9 + 0.1 * Math.sin(s.age * 8));
       this.bubbleMat.opacity = 0.26 * flick;
     }
     const summoning = s.alive && s.anim === 'summon';

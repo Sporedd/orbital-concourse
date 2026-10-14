@@ -2,7 +2,7 @@
 /**
  * UI smoke test (src/ui): screen flow with the meta systems wired like main.ts — start menu rows
  * for optional systems, key I inventory screen (pauses + captures input), settings persistence +
- * the interim sensitivity hook, and the game-over recap (damage dealt, kills, standing).
+ * the sensitivity setting read by the controller, and the game-over recap (damage dealt, kills, standing).
  */
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
@@ -24,6 +24,8 @@ import { createNetSession } from '@/net';
 import { createRoundManager } from '@/rounds';
 import { createHud } from '@/ui';
 import { SETTINGS_KEY, getSettings, reloadSettings, setSetting } from '@/ui/settings';
+import { vitalText } from '@/ui/hud';
+import { Controller, MOUSE_SENSITIVITY } from '@/player/controller';
 import { createAudio } from '@/audio';
 import { createFakeFx, createFakeRenderer } from '../helpers/fakeContext';
 
@@ -120,7 +122,7 @@ describe('UI screens', () => {
     expect(inv.hidden).toBe(true);
   });
 
-  it('persists mouse sensitivity and scales mouse deltas through the interim hook', () => {
+  it('persists mouse sensitivity and the controller scales its look by it (deltas stay raw)', () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const { ctx } = boot(false);
     setSetting('mouseSensitivity', 2);
@@ -133,10 +135,23 @@ describe('UI screens', () => {
     Object.defineProperty(ev, 'movementX', { value: 10 });
     Object.defineProperty(ev, 'movementY', { value: -4 });
     window.dispatchEvent(ev);
-    expect(ctx.input.mouseDelta()).toEqual({ dx: 30, dy: -12 });
+    // The input layer no longer scales (the interim hook is gone): the controller applies the setting once.
+    const c = new Controller(ctx);
+    const yaw0 = c.yaw;
+    c.look(true);
+    expect(yaw0 - c.yaw).toBeCloseTo(10 * MOUSE_SENSITIVITY * 3, 8);
+    expect(c.pitch).toBeCloseTo(4 * MOUSE_SENSITIVITY * 3, 8);
     setSetting('mouseSensitivity', 1);
     reloadSettings();
     expect(getSettings().mouseSensitivity).toBe(1);
+  });
+
+  it('vitals text rounds current and max consistently (no 119 / 118)', () => {
+    expect(vitalText(118.4, 118.4)).toBe('118 / 118');
+    expect(vitalText(130.24, 130.24)).toBe('130 / 130');
+    expect(vitalText(0.3, 100)).toBe('1 / 100');
+    expect(vitalText(99.2, 100)).toBe('100 / 100');
+    expect(vitalText(0, 80)).toBe('0 / 80');
   });
 
   it('game over recap shows damage dealt, kills and standing earned', () => {

@@ -314,7 +314,7 @@ section('standing');
   const h = makeHarness();
   const sys = createStandingSystem(h.ctx, { storage: store, leagueLoot: false });
   const st = sys.standing;
-  check(st.standing === 0 && st.rank.name === 'Fodder' && st.accentColor === 0xd9641e, 'fresh: 0, Fodder, rust accent');
+  check(st.standing === 0 && st.rank.name === 'Fodder' && st.accentColor === 0xff5f1f, 'fresh: 0, Fodder, scrap accent');
   h.ctx.events.emit('round:cleared', { round: 3 });
   check(st.standing === 85, `round 3 cleared = 85 (${st.standing})`);
   kill(h, { boss: true, tier: 2 });
@@ -342,7 +342,7 @@ section('standing');
   sys2.standing.award(RANKS[5].threshold - 392, 'debug', 'debug', true);
   const promo = h2.log.find((e) => e.name === 'standing:rank')?.payload as { leagueUp: boolean; rank: { name: string } };
   check(promo?.leagueUp && promo.rank.name === 'Rookie', 'league-up to Iron Rookie');
-  check(sys2.standing.accentColor === 0xff6a00, 'iron accent');
+  check(sys2.standing.accentColor === 0xffc61a, 'iron accent');
 }
 
 // ---------------------------------------------------------------------------

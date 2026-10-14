@@ -15,6 +15,7 @@ import type {
   BossKind, DamageOpts, Element, Enemy, EnemyRegistry, EnemyState, GameContext, MaterialFactory, MobKind, StatusEffect,
 } from '@/core/types';
 import { ELEMENT_COLORS } from '@/core/types';
+import { LUM, PALETTE, glowLum } from '@/rendering/style';
 import {
   DISC_GEO, RING_GEO, SPHERE_GEO,
   buildArtillery, buildBomber, buildBrute, buildGrunt, buildSpitter, buildSummoner, type Rig,
@@ -40,9 +41,9 @@ export const KIND_INFO: Record<Kind, KindInfo> = {
   grunt: { build: buildGrunt, radius: 0.5, height: 1.85, centerHeight: 1.1, critRadius: 0.3, burstColor: 0xbfe6ff, deathDuration: 2 },
   spitter: { build: buildSpitter, radius: 0.6, height: 1.9, centerHeight: 1.1, critRadius: 0.24, burstColor: 0xff6aa0, deathDuration: 2 },
   bomber: { build: buildBomber, radius: 0.5, height: 1.3, centerHeight: 0.75, critRadius: 0.25, burstColor: 0xffc060, deathDuration: 2 },
-  brute: { build: buildBrute, radius: 1.4, height: 3.7, centerHeight: 2.3, critRadius: 0.65, burstColor: 0xd8f0ff, deathDuration: 3 },
-  summoner: { build: buildSummoner, radius: 1.0, height: 4.5, centerHeight: 3.2, critRadius: 0.48, burstColor: 0xc8a8ff, deathDuration: 3 },
-  artillery: { build: buildArtillery, radius: 1.8, height: 3.8, centerHeight: 2.3, critRadius: 0.9, burstColor: 0xffb070, deathDuration: 3 },
+  brute: { build: buildBrute, radius: 1.9, height: 5.0, centerHeight: 3.1, critRadius: 0.88, burstColor: 0xd8f0ff, deathDuration: 3 },
+  summoner: { build: buildSummoner, radius: 1.3, height: 5.85, centerHeight: 4.15, critRadius: 0.62, burstColor: 0xc8a8ff, deathDuration: 3 },
+  artillery: { build: buildArtillery, radius: 2.35, height: 4.95, centerHeight: 3.0, critRadius: 1.17, burstColor: 0xffb070, deathDuration: 3 },
 };
 
 export interface ClaimSink {
@@ -55,7 +56,8 @@ export interface ClaimSink {
 const noRaycast = (): void => {};
 /** Anim names (set by the real enemies) that raise the arms on the mirror. */
 const ATTACK_ANIMS = new Set(['attack', 'slam', 'cast', 'summon', 'roar', 'fire', 'aim', 'stomp', 'charge']);
-const WHITE = new THREE.Color(0xffffff);
+// hit flash: same as src/enemies/base.ts (BONE at lum 1.2, art spec §7)
+const WHITE = new THREE.Color(PALETTE.BONE).multiplyScalar(glowLum(PALETTE.BONE, LUM.seam, 4));
 const FROZEN_TINT = new THREE.Color(0xbff4ff);
 const FIRE_TINT = new THREE.Color(ELEMENT_COLORS.fire);
 const SHOCK_TINT = new THREE.Color(ELEMENT_COLORS.shock);
@@ -195,7 +197,7 @@ export class MirrorEnemy implements Enemy {
     const root = rig.root;
     root.position.copy(this.position);
     root.rotation.set(0, this.state.yaw, 0);
-    root.scale.setScalar(1);
+    root.scale.setScalar(rig.scale);
     if (!this.frozen) this.animate(dt);
     if (!this.state.alive) {
       this.deathTime += dt;
@@ -245,7 +247,7 @@ export class MirrorEnemy implements Enemy {
     if (t > sinkStart) {
       const u = Math.min(1, (t - sinkStart) / (dur - sinkStart));
       root.position.y -= u * this.height * 0.4;
-      root.scale.setScalar(Math.max(0.05, 1 - 0.75 * u));
+      root.scale.setScalar(this.rig.scale * Math.max(0.05, 1 - 0.75 * u));
     }
   }
 

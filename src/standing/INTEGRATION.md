@@ -354,7 +354,7 @@ applied at that point, because `choose()` applies it straight away, so `reset()`
    });
 ```
 
-### 5f. Audio (optional, `src/audio/index.ts`)
+### 5f. Audio (`src/audio/index.ts`) — wired 2026-10-14 (standing:rank, hype:changed up/down, hype:gift, hype:boo; see docs/INTEGRATION_NOTES.md)
 
 ```ts
 import { onStanding } from '@/standing';

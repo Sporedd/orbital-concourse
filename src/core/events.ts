@@ -48,6 +48,8 @@ export interface GameEvents extends StandingEvents {
   'xp:gained': { playerId: string; amount: number; xp: number; xpToNext: number; level: number };
   'level:up': { playerId: string; level: number; skillPoints: number };
   'skill:changed': { skillId: string; rank: number; stats: PlayerStats };
+  /** Class picked or changed (src/progression/classes.ts ClassId; null = none). */
+  'class:changed': { classId: string; previous: string | null };
 
   // gear (bridged from the inventory by src/gear createGearSystem)
   'gear:changed': { playerId: string; stats: GearStats; loadout: Readonly<Loadout> };

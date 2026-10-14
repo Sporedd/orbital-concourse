@@ -4,14 +4,14 @@
  *    a right column that switches between CONTROLS / SPONSOR / SETTINGS, league plaque (the
  *    standing badge when ctx.standing exists), CLICK TO ENTER
  *  - pause: hazard-tab band + menu + settings (mouse sensitivity, sound)
- *  - skill tree: floor plan of plinths
+ *  - skill tree: floor plan of plinths + class picker (./skillTree.ts, docs/SKILL_TREE.md)
  *  - game over: THREAT ribbon + manifest recap (round, kills, damage, time, best weapon,
  *    standing earned, rank) + standing badge
  * Optional systems (ctx.standing, ctx.gear, ctx.net) are looked up when a screen is shown, so
  * their rows/panels appear as soon as main.ts wires them and stay hidden otherwise.
  */
 import type { GameContext, Screen, WeaponDef } from '@/core/types';
-import { BRANCHES, SKILLS, describeSkill, readBestRound } from '@/progression';
+import { asClassProgression, readBestRound } from '@/progression';
 import { weaponDps } from '@/loot/weapons';
 import { mountLobby } from '@/net/ui';
 import { RANKS } from '@/standing/ranks';
@@ -19,6 +19,7 @@ import { createSponsorPicker, createStandingBadge, type SponsorPickerWidget, typ
 import { esc, h, rarityCss } from './dom';
 import { currentLeague } from './hud';
 import { fmtInt, fmtTime, type RunStats } from './runStats';
+import { createSkillTree } from './skillTree';
 import { SENSITIVITY_RANGE, getSettings, onSettingsChange, setSetting } from './settings';
 
 export interface ScreenCallbacks {
@@ -207,6 +208,8 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
   const enterRow = row(menu, 'ENTER THE PIT', '[LMB]', () => cb.onStart(), true);
   startRows.push({ el: enterRow });
   startRows.push({ el: row(menu, 'SKILL TREE', '[TAB]', () => cb.onOpenSkills?.()) });
+  const classRow = row(menu, 'CLASS', '▸', () => tree.openPicker());
+  startRows.push({ el: classRow, when: () => !!asClassProgression(ctx.progression) });
   startRows.push({ el: row(menu, 'LOADOUT', '[I]', () => cb.onOpenInventory?.()), when: () => !!ctx.gear });
   const sponsorRow = panelRow('SPONSOR', 'sponsor', () => !!ctx.standing);
   startRows.push(sponsorRow);
@@ -270,6 +273,8 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
     const sp = ctx.standing?.sponsors;
     const v = sponsorRow.el.querySelector('.v')!;
     v.textContent = sp ? `SPONSOR: ${sp.contract.title.toUpperCase()}` : 'SPONSOR';
+    const cls = asClassProgression(ctx.progression)?.classDef;
+    classRow.querySelector('.v')!.textContent = cls ? `CLASS: ${cls.name.toUpperCase()}` : 'CLASS';
   }
 
   // ---- pause ---------------------------------------------------------------------------------
@@ -293,11 +298,11 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
   buildSettings(prow);
   pause.addEventListener('click', () => cb.onResume());
 
-  // ---- skills ----------------------------------------------------------------------------------
+  // ---- skills (tree + class picker live in ./skillTree.ts) -----------------------------------
   const skills = h('div', 'sb-screen skills-screen', root);
   h('div', 'sb-floorplan', skills);
   const panel = h('div', 'sb-skills', skills);
-  let selected: string | null = null;
+  const tree = createSkillTree(ctx, panel, root, { onClose: () => cb.onCloseSkills() });
 
   // ---- game over -------------------------------------------------------------------------------
   const over = h('div', 'sb-screen overlay', root);
@@ -431,109 +436,16 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
       refreshPlaque();
     }
     if (screen === 'skills') renderSkills();
+    tree.syncPicker(screen);
     settingsSyncs.forEach((s) => s());
     soundShown = null;
     syncSound();
   }
 
-  // ---- skill tree: floor plan --------------------------------------------------------------
-  const COL = 256;
-  const ROW = 128;
+  // ---- skill tree --------------------------------------------------------------------------
   function renderSkills(): void {
-    const prog = ctx.progression;
-    const pts = prog.skillPoints;
-    const nodes: { id: string; code: string; x: number; y: number }[] = [];
-    let svg = '';
-    let html = '';
-    let maxRows = 1;
-    BRANCHES.forEach((br, bi) => {
-      const letter = String.fromCharCode(65 + bi);
-      const list = SKILLS.filter((s) => s.branch === br.id);
-      maxRows = Math.max(maxRows, list.length);
-      const x = bi * COL;
-      html += `<div class="sb-bhead" style="left:${x}px;top:0">${letter} · ${esc(br.name.toUpperCase())}</div>`;
-      // spine from the header down through the branch (orthogonal 2 px)
-      if (list.length) svg += `<path d="M${x + 36} 24 V ${48 + (list.length - 1) * ROW}" stroke="#4a4c50" stroke-width="2" fill="none"/>`;
-      list.forEach((n, i) => {
-        nodes.push({ id: n.id, code: `${letter}${i + 1}`, x, y: 48 + i * ROW });
-      });
-    });
-    // requirement links (orthogonal L)
-    for (const n of SKILLS) {
-      if (!n.requires) continue;
-      const a = nodes.find((p) => p.id === n.requires);
-      const b = nodes.find((p) => p.id === n.id);
-      if (!a || !b) continue;
-      svg += `<path d="M${a.x + 36} ${a.y + 72} V ${b.y - 16} H ${b.x + 36} V ${b.y}" stroke="#ECEAE4" stroke-width="2" fill="none"/>`;
-    }
-    if (!selected || !SKILLS.some((s) => s.id === selected)) selected = (SKILLS.find((s) => prog.canUpgrade(s.id)) ?? SKILLS[0])?.id ?? null;
-    for (const p of nodes) {
-      const n = SKILLS.find((s) => s.id === p.id)!;
-      const r = prog.rank(n.id);
-      const locked = !!n.requires && prog.rank(n.requires) < 1;
-      const cls = [locked ? 'locked' : r > 0 ? 'invested' : '', !locked && prog.canUpgrade(n.id) ? 'avail' : '', p.id === selected ? 'sel' : ''].join(' ');
-      const blocks = Array.from({ length: n.maxRank }, (_, i) => `<i class="${i < r ? 'on' : ''}"></i>`).join('');
-      const state = locked ? 'LOCKED' : r >= n.maxRank ? 'MAXED' : `RANK ${r}/${n.maxRank}`;
-      html += `<div class="sb-plinth ${cls}" data-skill="${esc(n.id)}" style="left:${p.x}px;top:${p.y}px" role="button" aria-label="${esc(n.name)} ${state}">
-        <span class="code">${p.code}</span><div class="rk">${blocks}</div><div class="nm"><b>${esc(n.name)}</b><span>${state}</span></div></div>`;
-    }
-    const w = BRANCHES.length * COL;
-    const sel = SKILLS.find((s) => s.id === selected);
-    let detail = '';
-    if (sel) {
-      const r = prog.rank(sel.id);
-      const per = parseFloat(sel.value) || 0;
-      const sign = sel.description.trim().startsWith('-') ? '−' : '+';
-      const now = `${sign}${Math.round(per * r)} %`;
-      const nxt = r >= sel.maxRank ? 'MAX' : `${sign}${Math.round(per * (r + 1))} %`;
-      const can = prog.canUpgrade(sel.id);
-      const code = nodes.find((p) => p.id === sel.id)?.code ?? '';
-      detail = `<div class="sb-detail sb-panel">
-        <div class="sb-lbl">${code} · ${esc(BRANCHES.find((b) => b.id === sel.branch)?.name.toUpperCase() ?? '')}</div>
-        <div class="dn">${esc(sel.name)}</div>
-        <div class="dd">${esc(describeSkill(sel))}</div>
-        <div class="dv"><span>RANK ${r}/${sel.maxRank}</span><span>${now} → ${nxt}</span></div>
-        <div class="acts"><button type="button" class="sb-btn" data-invest="${esc(sel.id)}" ${can ? '' : 'disabled'}><span class="sb-key">LMB</span>INVEST</button>
-        <span class="sb-lbl">${can ? 'COSTS ONE POINT' : r >= sel.maxRank ? 'MAXED' : pts > 0 ? 'LOCKED' : 'NO POINTS'}</span></div>
-      </div>`;
-    }
-    panel.innerHTML = `
-      <div class="sb-skills-head">
-        <div><div class="sb-lbl">QUARTERS · TRAINING FLOOR</div><div class="h">SKILL TREE</div><div class="sb-lbl" style="margin-top:8px">LV ${pad2(prog.level)}</div></div>
-        <div class="sb-chip">${pad2(pts)} POINT${pts === 1 ? '' : 'S'}</div>
-      </div>
-      <div class="sb-plan" style="width:${w}px;height:${48 + maxRows * ROW}px"><svg width="${w}" height="${48 + maxRows * ROW}">${svg}</svg>${html}</div>
-      ${detail}
-      <div class="sb-skills-foot"><span class="sb-key">TAB</span><span class="sb-act">BACK</span>
-        <button type="button" class="sb-btn" data-reset="1">RESET TREE</button></div>`;
+    tree.render();
   }
-
-  panel.addEventListener('mouseover', (e) => {
-    const p = (e.target as HTMLElement).closest('.sb-plinth') as HTMLElement | null;
-    if (!p || !p.dataset.skill || p.dataset.skill === selected) return;
-    selected = p.dataset.skill;
-    renderSkills();
-  });
-  panel.addEventListener('click', (e) => {
-    const t = e.target as HTMLElement;
-    const plinth = t.closest('.sb-plinth') as HTMLElement | null;
-    const btn = t.closest('button') as HTMLButtonElement | null;
-    if (plinth?.dataset.skill) {
-      selected = plinth.dataset.skill;
-      if (ctx.progression.upgrade(selected)) ctx.audio.play('skill_up');
-    } else if (btn && !btn.disabled) {
-      if (btn.dataset.invest) {
-        if (ctx.progression.upgrade(btn.dataset.invest)) ctx.audio.play('skill_up');
-      } else if (btn.dataset.reset) {
-        ctx.progression.resetTree();
-        ctx.audio.play('ui_click');
-      }
-    } else if (!btn && !plinth && t.closest('.sb-detail') === null && t.closest('.sb-skills-head') === null) {
-      cb.onCloseSkills();
-      return;
-    }
-    renderSkills();
-  });
 
   function setGameOver(round: number, kills: number): void {
     goRound = round;

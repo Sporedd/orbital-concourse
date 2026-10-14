@@ -68,7 +68,7 @@ The boot-time helpers live in `src/core/storage.ts` so tests can import them: `m
 | `snowbound.standing.v1` | `concourse.standing.v1` |
 | `snowbound.sponsor.v1` | `concourse.sponsor.v1` |
 | `snowbound.gear.v1` | `concourse.gear.v1` (`GEAR_STORAGE_KEY`, plus `LEGACY_GEAR_STORAGE_KEY`) |
-| `snowbound.net.name` | `concourse.net.name` (`NET_NAME_KEY`; the old key is **kept**, see open items) |
+| `snowbound.net.name` | `concourse.net.name` (`NET_NAME_KEY`; the lobby reads it, so the old key is dropped like the others) |
 
 Two keys are new:
 
@@ -137,11 +137,11 @@ Gear extras, via `gearExtras(ctx)`:
 
 | Hook | Effect | Where |
 |---|---|---|
-| `voidrunner_dash` | A sprint-jump with movement input becomes an 18 m/s horizontal dash, with a 4 s cooldown and a small camera shake. | `Controller.dashEnabled` / `DASH_SPEED` |
-| `bulwark_last_stand` | 50 % damage reduction for 2 s after the shield breaks, with a 10 s cooldown. | Player `takeDamage` |
-| `pitfighter_bloodlust` | A melee kill refills the shield and refunds a grenade (unless `grenadeless`). | Player `doMelee` |
+| `voidrunner_dash` | A sprint-jump with movement input becomes a 15 m/s horizontal dash (about 1.4× the 11 m/s sprint), with a 5 s cooldown and a small camera shake. | `Controller.dashEnabled`, `DASH_SPEED`, `DASH_COOLDOWN` |
+| `bulwark_last_stand` | 40 % damage reduction for 2.5 s after the shield breaks, with a 12 s cooldown. | Player `takeDamage`, `LAST_STAND_*` |
+| `pitfighter_bloodlust` | A melee kill restores 35 % of max shield (additive, capped) and refunds one grenade at most every 8 s (never past the cap, never with `grenadeless`). | Player `doMelee`, `BLOODLUST_*` |
 
-They are tuned only on paper and need a feel pass in the browser.
+Tuning pass of 2026-10-14 (see "Cleanup pass" below): the first numbers were 18 m/s / 4 s, 50 % / 2 s / 10 s, and a full shield refill plus a grenade on every melee kill. The dash at 18 m/s crossed half the pit in one jump and the full refill made melee chains unkillable; the values above are meant to be felt but not to carry a build. The constants are exported, so a later feel pass only touches `src/player/controller.ts` and `src/player/index.ts`.
 
 **Viewmodel** (`src/player/viewmodel.ts`, surgical, no material changes):
 - The builder parts carry `vmRole` tags.
@@ -233,25 +233,61 @@ Weapons and gear persist across runs and sessions, like the skill tree, and runs
 - `tests/helpers/fakeContext.ts`: the fake player gained `revive`, `loadout` and `onGround`; the fake enemy returns the applied damage.
 - `package.json`: added `test:smoke` and `test:all`.
 
+## Cleanup pass (2026-10-14, evening)
+
+A second pass over the leftovers the build agents reported. Everything below is covered by `npm run test:all` and was checked in the browser pane where noted.
+
+1. **League accents.** `src/standing/ranks.ts` now reads its accents from `LEAGUE_STYLE` in `src/rendering/style.ts` (Scrap `#FF5F1F`, Iron `#FFC61A`, Steel `#1FD1C1`, Star `#E8368F`, Void `#8C6CFF`). One source of truth; the standing smoke test checks the new values.
+2. **Mouse sensitivity.** `Controller.look()` multiplies `MOUSE_SENSITIVITY` by `getSettings().mouseSensitivity`. The interim `installSensitivityHook` is gone (function and call), so the scale applies once. `tests/smoke/ui.test.ts` checks the controller path and that `Input.mouseDelta()` stays raw.
+3. **Health overshoot (119 / 118).** The sim clamp in `applyMaxStats` was already correct: a fractional max such as 100 × 1.1 × 1.184 = 130.24 was shown as `ceil(current) / round(max)`. The HUD now uses `vitalText()` (`src/ui/hud.ts`): current rounds up, max rounds to nearest, and current never reads above max. Tests: a sim test in `tests/integration/gearStats.test.ts` (gear on, hurt, gear off, re-equip, skill change) and a formatter test in the UI smoke.
+4. **Hit flash.** Enemies and co-op mirrors flash emissive BONE at exactly lum 1.2 (`glowLum(PALETTE.BONE, LUM.seam)`), was BONE × 1.4.
+5. **Boss size.** Rigs carry a `scale` (`Rig.scale`, `BOSS_SCALE` in `src/enemies/models.ts`) that the view applies to the root every frame, including the death sink: brute ×1.35 (5.0 m, 2.7× grunt), summoner ×1.3 (5.85 m, 3.2×), artillery ×1.3 (4.95 m, 2.7×). Config radius/height/centerHeight, the weak-point radii (0.88 / 0.62 / 1.17) and `KIND_INFO` in `src/net/enemyMirror.ts` carry the same factors; the brute's probe/chest heights and the summoner bubble follow. Browser: round 1 reached the boss phase in co-op; both tabs showed the boss bar (`HEADLINER · HULLBREAKER THE BRUTE · PHASE 1/3 · 100 %`) and a 5 m brute at rig scale 1.35.
+6. **Gear set hooks.** Tuned, see the Set hooks table above.
+7. **Standing audio hooks.** `src/audio/index.ts` listens to `standing:rank` (levelup, higher pitch on a league-up), `hype:changed` (tier up: boss_roar, full at ROARING; tier down: ui_open pitched down), `hype:gift` (round_clear) and `hype:boo` (low player_hurt). Existing SfxNames only; a crowd synth is still the natural follow-up.
+8. **Co-op in the browser pane.** See the next section.
+9. **`snowbound.net.name`.** `src/net/ui.ts` reads `NET_NAME_KEY`, so the `keepOld` flag is gone from `STORAGE_MIGRATIONS`.
+
+### Co-op browser test (2026-10-14)
+
+Setup: `npm run relay` and the app in two tabs of the browser pane, host + join by code through the F2 lobby. `.claude/launch.json` now has `relay` (port 8787) and `preview` (`vite preview` on 4173) entries next to `dev`.
+
+What worked, through the UI where the pane allowed it and `window.game` otherwise:
+
+- Host game → 5-letter code → Join in the other tab: the lobby lists both players (`HOSTY · HOST`, `CHALLENGER · YOU`, `2/4 PLAYERS`). Same-profile tabs share the player id and the host renames the second one (`<id>-<peer>`), as designed.
+- `rounds.start()` on the host: enemies spawn and are mirrored on the client with the same ids; kills and XP reach the client (`totalKills` and `progression.xp` advance).
+- The host's pause screen does not freeze the client: round `phaseTime` advanced at the same rate with the host on `pause` and on `none`.
+- Boss phase: boss bar on both sides (item 5 above), mirrored boss health and phase.
+- Revive: killing the client's `RemotePlayer` on the host downed the client (`player:died`), `revive(0.35)` brought it back (`player:revived`, 44 / 126 health shown as `45 / 126`).
+- Gear on avatars (new, see below): the client's avatar on the host wore the client's chest, the host's avatar on the client wore the host's helm.
+- Zero console errors in both tabs during all of the above.
+
+What broke and was fixed:
+
+- **A hidden tab freezes the host.** The browser pane runs `requestAnimationFrame` only for a visible pane, and a real browser stops it for a background tab, so a host that alt-tabs freezes the whole session and the relay eventually drops the silent socket. `src/main.ts` now keeps a 50 ms timer that steps `frame()` whenever rAF has been silent for 200 ms **while `net.inSession`** (single-player still freezes, which is what a hidden tab should do). `dt` stays capped at 1/20 s, so under a browser's 1 Hz background throttle the sim slows rather than jumps. The same frame skips `pipeline.render()` when the drawing buffer is 0 × 0, which removes the `GL_INVALID_FRAMEBUFFER_OPERATION` warning spam from hidden tabs.
+- **Vite reloads.** With other sessions editing the tree, every save reloaded both tabs and killed the room mid-wave. The test was finished against `vite build` + `vite preview` (no HMR); the `preview` launch entry is for that.
+
+Known limits of the pane: it cannot pointer-lock, so after the 0.8 s grace the HUD shows the pause screen in both tabs (the sim keeps running in co-op). A click on the canvas in a real browser locks the pointer and the screen goes away.
+
+### Loadouts over the wire
+
+`PlayerState.loadout` now crosses the wire, once per change rather than per snapshot:
+
+- `ClientTickMsg.ld` carries the client's `Loadout` on the first tick after the welcome and whenever `gear:changed` fires for the local player.
+- The host validates every piece with `sanitizeLoadout` (`src/net/protocol.ts`: `sanitizeGear` per slot, the slot must match), stores it on the `RemotePlayer`, dresses the host-side avatar and bumps that player's loadout version. The host's own loadout starts at version 1 (a persisted loadout reaches every joiner) and bumps on `gear:changed`.
+- `PlayerW.lv` is the version; each snapshot includes `SnapMsg.ld` (`{ i, v, l }`) only for players whose version that client has not seen (per-link `sentLv`), never the client's own.
+- The client validates again, keeps the loadout on its remote view and calls `Avatar.setLoadout()`.
+- `Avatar` (`src/net/avatar.ts`) has gear anchors following the `src/gear/models.ts` conventions (helm at the head centre, chest at the torso centre, gloves at the wrists hanging along the arm, boots at the ankles, trinket beside the hip), turned by π because the avatar faces −Z, and scaled 1.15–1.5 to the avatar's chunkier proportions. Unchanged pieces are kept; legendary seams animate.
+- Host-side shield regen for a remote player now includes the client's `shieldRegenMult` from `computeLoadoutStats`.
+- `src/net/__smoke__/session.smoke.ts` checks both directions and that an invalid piece is dropped.
+
 ## Open items
 
-1. **Two-tab co-op browser test.** Everything above is verified only headless. Still to check in the browser:
-   - F2 lobby, host/join
-   - avatars, revives
-   - gear pickups on a client
-   - host pause not freezing the client
-2. **`src/net/ui.ts` (UI agent).** Change `NAME_KEY` to the exported `NET_NAME_KEY` (`concourse.net.name`, from `@/net`). Then drop `keepOld: true` from the `snowbound.net.name` row in `src/core/storage.ts`. Until then, the lobby keeps reading the old key, which migration leaves in place.
-3. **Lobby button (UI agent).** Call `ctx.net?.lobby?.show()` and stop the click from propagating, so it does not start a run. A "waiting for host" label on client start and retry would help, because `rounds.start()` is a no-op on a client.
-4. **Remote avatars wearing gear.** `PlayerState.loadout` exists, but loadouts are not on the wire yet: `RemotePlayer.loadout` stays `{}`.
-   - Proposal: send the loadout (5 `GearDef`s, about 1–2 KiB) in the client tick only when `gear:changed` fires, and relay it in `PlayerW`.
-   - Each piece is validated with `sanitizeGear` and attached with `buildGearModel` at the `src/gear/models.ts` anchors (`paperDoll.ts` is the reference).
-   - Remote shield regen on the host also ignores the client's gear (`shieldRegenMult`).
-5. **Set-hook feel pass.** The three hooks are implemented but untuned: dash speed and cooldown, the last-stand window, bloodlust.
-6. **Kill cause on co-op clients.** The relayed `ek` event carries no cause, so client-side hype falls back to inferring melee finishers. Adding `c` to `ek` is a one-line protocol change.
-7. **Sponsors in co-op.** Each peer's contract is local: the client's `noShield` and damage apply to itself, while enemy health and count follow the host's contract. A lobby-wide contract chosen by the host is still to do.
-8. **Optional audio hooks** (`src/standing/INTEGRATION.md` §5f) are not wired. `src/audio` has no owner in this pass.
-9. **Earlier contract gaps still open** (`src/net/INTEGRATION.md` §4):
+1. **Lobby label on a client.** The start-menu `CO-OP` row opens the lobby without starting a run (verified). A "waiting for host" label on client start and retry would still help, because `rounds.start()` is a no-op on a client.
+2. **Kill cause on co-op clients.** The relayed `ek` event carries no cause, so client-side hype falls back to inferring melee finishers. Adding `c` to `ek` is a one-line protocol change.
+3. **Sponsors in co-op.** Each peer's contract is local: the client's `noShield` and damage apply to itself, while enemy health and count follow the host's contract. A lobby-wide contract chosen by the host is still to do.
+4. **Crowd audio.** The standing hooks reuse existing sounds; a crowd bed whose loudness follows `hype.modifiers.value` is the natural follow-up.
+5. **Earlier contract gaps still open** (`src/net/INTEGRATION.md` §4):
    - `ProjectileSystem.snapshot()`
    - `EnemyState.frozen` / `immune`
-   - an exported `ENEMY_CONFIGS` table
+   - an exported `ENEMY_CONFIGS` table (`KIND_INFO` still mirrors the boss numbers by hand)
    - enemy audio and shakes on clients

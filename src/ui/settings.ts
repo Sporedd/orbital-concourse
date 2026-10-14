@@ -4,12 +4,10 @@
  *   import { getSettings } from '@/ui/settings';
  *   getSettings().mouseSensitivity   // multiplier on the controller's MOUSE_SENSITIVITY (1 = default)
  *
- * Also exposed as `window.__settings` ({ get, set, onChange }) for code that should not import
- * src/ui. Until the player controller reads the multiplier itself, src/ui/index.ts installs
- * `installSensitivityHook(ctx.input)`, which scales Input.mouseDelta() on the instance. When the
- * controller reads `getSettings().mouseSensitivity`, remove that one call (or the scale applies twice).
+ * The player controller multiplies its base sensitivity by this in `Controller.look()`
+ * (src/player/controller.ts). Also exposed as `window.__settings` ({ get, set, onChange }) for
+ * code that should not import src/ui.
  */
-import type { Input } from '@/core/input';
 
 export const SETTINGS_KEY = 'concourse.settings.v1';
 
@@ -71,23 +69,6 @@ export function onSettingsChange(cb: Listener): () => void {
 /** Re-read storage (tests / another tab). */
 export function reloadSettings(): void {
   current = load();
-}
-
-const hooked = new WeakSet<object>();
-
-/**
- * Interim hook: scale Input.mouseDelta() by the sensitivity multiplier on this instance only.
- * Remove the call once the controller multiplies MOUSE_SENSITIVITY by getSettings().mouseSensitivity.
- */
-export function installSensitivityHook(input: Input): void {
-  if (!input || hooked.has(input) || typeof input.mouseDelta !== 'function') return;
-  hooked.add(input);
-  const base = input.mouseDelta.bind(input);
-  input.mouseDelta = () => {
-    const d = base();
-    const m = current.mouseSensitivity;
-    return m === 1 ? d : { dx: d.dx * m, dy: d.dy * m };
-  };
 }
 
 if (typeof window !== 'undefined') {

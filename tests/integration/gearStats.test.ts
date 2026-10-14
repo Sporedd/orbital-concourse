@@ -10,7 +10,7 @@ import type { EnemyRegistry } from '@/core/types';
 import { createGearSystem, makeAffix, type GearDef } from '@/gear';
 import { createLootSystem } from '@/loot';
 import { starterWeapon } from '@/loot/weapons';
-import { createPlayer, createPlayerRegistry, type Player } from '@/player';
+import { LAST_STAND_REDUCTION, LAST_STAND_TIME, createPlayer, createPlayerRegistry, type Player } from '@/player';
 import { getStats } from '@/player/shared';
 import { createFakeContext, createFakeEnemy, fakeProgression, recordEvents, type Recorder, type TestContext } from '../helpers/fakeContext';
 
@@ -61,6 +61,31 @@ describe('gear pickup → equip → stats', () => {
     const changed = ev.of('gear:changed');
     expect(changed.length).toBeGreaterThan(0);
     expect(changed.at(-1)!.playerId).toBe('p-test');
+  });
+
+  it('max-health recomputes keep health within max: gear on, hurt, gear off, skill change', () => {
+    // A fractional max (100 × 1.1 × 1.184 = 130.24) is what showed as "119 / 118" in the HUD.
+    const g = { ...chest(), implicit: makeAffix('healthMult', 0.184) };
+    dropAtFeet(g);
+    ctx.loot.update(1 / 60);
+    expect(player.maxHealth).toBeCloseTo(PLAYER.maxHealth * 1.1 * 1.184, 5);
+    expect(player.health).toBeLessThanOrEqual(player.maxHealth);
+    expect(player.health).toBeCloseTo(player.maxHealth, 5);
+    player.takeDamage(player.shield + 10);
+    const hurt = player.health;
+    expect(hurt).toBeCloseTo(player.maxHealth - 10, 5);
+    // Unequip: max shrinks back, health is clamped to it.
+    expect(ctx.gear!.inventory.unequip('chest')).toBe(true);
+    expect(player.maxHealth).toBeCloseTo(PLAYER.maxHealth * 1.1, 5);
+    expect(player.health).toBeLessThanOrEqual(player.maxHealth);
+    // Re-equip grows max and current by the same amount, never past the new max.
+    expect(ctx.gear!.inventory.equip(g.id)).toBe(true);
+    expect(player.maxHealth).toBeCloseTo(PLAYER.maxHealth * 1.1 * 1.184, 5);
+    expect(player.health).toBeLessThanOrEqual(player.maxHealth);
+    // A skill change with a lower health multiplier shrinks the max and clamps too.
+    ctx.events.emit('skill:changed', { skillId: 'x', rank: 0, stats: { ...fakeProgression().stats, healthMult: 0.5 } });
+    expect(player.maxHealth).toBeCloseTo(PLAYER.maxHealth * 0.5 * 1.184, 5);
+    expect(player.health).toBeLessThanOrEqual(player.maxHealth);
   });
 
   it('equipped gear multiplies into getStats and raises max health live', () => {
@@ -177,13 +202,13 @@ describe('player contract additions + gear set hooks', () => {
     expect(s0 - player.shield).toBeCloseTo(30);
   });
 
-  it('bulwark_last_stand halves damage for 2 s after the shield breaks', () => {
+  it('bulwark_last_stand reduces damage for a window after the shield breaks', () => {
     withExtras({ hooks: ['bulwark_last_stand'] });
     player.takeDamage(player.shield); // exactly breaks the shield → last stand starts
     const h = player.health;
     player.takeDamage(20);
-    expect(h - player.health).toBeCloseTo(10);
-    for (let i = 0; i < 130; i++) player.update(1 / 60); // > 2 s
+    expect(h - player.health).toBeCloseTo(20 * (1 - LAST_STAND_REDUCTION));
+    for (let i = 0; i < Math.ceil(LAST_STAND_TIME * 60) + 10; i++) player.update(1 / 60); // past the window
     const h2 = player.health;
     player.takeDamage(20);
     expect(h2 - player.health).toBeCloseTo(20);

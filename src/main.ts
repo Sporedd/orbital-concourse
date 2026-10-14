@@ -89,7 +89,14 @@ window.addEventListener('resize', () => {
 
 // ---- loop -----------------------------------------------------------------
 const clock = new THREE.Clock();
+let rafId = 0;
+let lastRafAt = performance.now();
+const onRaf = () => {
+  lastRafAt = performance.now();
+  frame();
+};
 function frame() {
+  rafId = 0;
   const dt = Math.min(clock.getDelta(), 1 / 20);
   ctx.time.delta = dt;
   ctx.time.elapsed += dt;
@@ -112,12 +119,26 @@ function frame() {
   }
   ctx.audio.update(dt);
   pipeline.update(dt);
-  pipeline.render();
+  // A hidden tab / embedded pane can have a 0×0 drawing buffer: rendering it only logs
+  // "framebuffer incomplete" warnings.
+  if (innerWidth > 0 && innerHeight > 0) pipeline.render();
 
   ctx.input.endFrame();
-  requestAnimationFrame(frame);
+  rafId = requestAnimationFrame(onRaf);
 }
-requestAnimationFrame(frame);
+rafId = requestAnimationFrame(onRaf);
+
+// requestAnimationFrame stops in a hidden tab (or a hidden embedded pane). Single-player can
+// simply freeze, but a frozen host freezes the co-op session for every peer and the relay drops
+// the silent socket. While in a session, a timer keeps the loop alive whenever rAF goes quiet
+// (browsers throttle background timers to ~1 Hz; dt is capped at 1/20 s, so the sim slows
+// rather than jumps). The timer steps every tick while rAF stays silent; once rAF fires again
+// the timer sees a fresh rAF frame and does nothing.
+setInterval(() => {
+  if (!net.inSession || performance.now() - lastRafAt < 200) return;
+  if (rafId) cancelAnimationFrame(rafId);
+  frame();
+}, 50);
 
 // Dev convenience
 (window as any).game = ctx;

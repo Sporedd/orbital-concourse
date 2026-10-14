@@ -10,10 +10,11 @@ import { LOOT, PLAYER } from '@/core/config';
 import type { Enemy, Fx, GameContext, PlayerState } from '@/core/types';
 import type { PeerInfo } from './relayProtocol';
 import {
-  dec, diffEnemy, enc, q1, q2, qv, readWeaponStats, stubWeapon, avatarWeaponW,
-  type ClientTickMsg, type EnemyW, type EvW, type FxW, type HostMsg, type LootW, type PlayerW, type ProjW,
+  dec, diffEnemy, enc, q1, q2, qv, readWeaponStats, sanitizeLoadout, stubWeapon, avatarWeaponW,
+  type ClientTickMsg, type EnemyW, type EvW, type FxW, type HostMsg, type LoadoutW, type LootW, type PlayerW, type ProjW,
   type RoundW, type SnapMsg, type WeaponStats,
 } from './protocol';
+import { computeLoadoutStats } from '@/gear/generator';
 import { RemotePlayer } from './remotePlayer';
 import { Avatar } from './avatar';
 import { ClockSync, SampleBuffer, makeSample, nowSeconds } from './interp';
@@ -44,6 +45,12 @@ interface Link {
   lastWeapon: WeaponStats | null;
   lastMults: [number, number];
   promptT: number;
+  /** Loadout version of this client's player (bumps on every tick that carries `ld`). */
+  lv: number;
+  /** Loadout versions already sent to this client, per player id. */
+  sentLv: Map<string, number>;
+  /** Shield regen multiplier from the client's gear (host-side regen). */
+  shieldRegenMult: number;
 }
 
 /** Fields some enemies carry beyond EnemyState (read structurally, see INTEGRATION.md). */
@@ -60,6 +67,8 @@ export interface HostRuntimeOptions {
 
 export class HostRuntime {
   private readonly links = new Map<string, Link>();
+  /** Version of the host player's own loadout (bumps on gear:changed). Starts at 1: a persisted loadout is sent to every joiner. */
+  private localLv = 1;
   private readonly byPid = new Map<string, Link>();
   private readonly offs: (() => void)[] = [];
   private readonly tracer = new HitscanTracer();
@@ -113,6 +122,9 @@ export class HostRuntime {
       lastWeapon: null,
       lastMults: [1, 1],
       promptT: 0,
+      lv: 0,
+      sentLv: new Map(),
+      shieldRegenMult: 1,
     };
     link.player = new RemotePlayer(ctx, pid, info.name, {
       onHurt: (amount, element, from) => {
@@ -165,6 +177,13 @@ export class HostRuntime {
     link.buf.push(m.tm, m.p[0], m.p[1], m.p[2], p.yaw, p.pitch);
     p.setMax(m.mh, m.ms);
     this.applyAvatarWeapon(link, m.w);
+    if (m.ld !== undefined) {
+      const clean = sanitizeLoadout(m.ld);
+      p.loadout = clean;
+      link.lv++;
+      link.shieldRegenMult = computeLoadoutStats(clean).shieldRegenMult;
+      link.avatar?.setLoadout(clean);
+    }
 
     this.by = link.info.peer;
     try {
@@ -281,7 +300,7 @@ export class HostRuntime {
   update(dt: number): void {
     const shieldMult = this.ctx.progression?.stats?.shieldMult ?? 1;
     for (const link of this.links.values()) {
-      link.player.update(dt, shieldMult);
+      link.player.update(dt, shieldMult * link.shieldRegenMult);
       if (link.avatar) {
         const t = link.clock.renderTime();
         const s = link.buf.sample(t, this.tmpSample);
@@ -388,6 +407,9 @@ export class HostRuntime {
   private subscribe(): void {
     const ev = this.ctx.events;
     const on = this.offs;
+    on.push(ev.on('gear:changed', (e) => {
+      if (e.playerId === this.ctx.player.id) this.localLv++;
+    }));
     on.push(ev.on('round:phase', (e) => this.pushAll({ e: 'rp', ph: enc.phase(e.phase), r: e.round })));
     on.push(ev.on('round:intermission', (e) => this.pushAll({ e: 'ri', r: e.round, s: e.seconds })));
     on.push(ev.on('round:started', (e) => this.pushAll({ e: 'rs', r: e.round, kr: e.killsRequired })));
@@ -526,6 +548,7 @@ export class HostRuntime {
         a: p.alive ? 1 : 0,
         w: avatarWeaponW(p.activeWeapon),
         rv: rv ? q2(rv / REVIVE_TIME) : undefined,
+        lv: link ? link.lv : p === this.ctx.player ? this.localLv : undefined,
       });
     }
     return out;
@@ -582,6 +605,16 @@ export class HostRuntime {
       }
       if (fx.length) msg.fx = fx.reverse();
       if (link.events.length) msg.ev = link.events.splice(0);
+      // loadouts this client has not seen at their current version (never its own)
+      const ld: LoadoutW[] = [];
+      for (const w of pl) {
+        if (w.i === link.pid || w.lv === undefined || link.sentLv.get(w.i) === w.lv) continue;
+        const owner = w.i === this.ctx.player.id ? this.ctx.player : this.byPid.get(w.i)?.player;
+        if (!owner) continue;
+        link.sentLv.set(w.i, w.lv);
+        ld.push({ i: w.i, v: w.lv, l: { ...owner.loadout } });
+      }
+      if (ld.length) msg.ld = ld;
       this.send(link.info.peer, msg);
     }
   }
