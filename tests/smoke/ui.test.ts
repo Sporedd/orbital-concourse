@@ -92,7 +92,7 @@ describe('UI screens', () => {
   it('start menu hides rows for missing systems and shows them when wired', () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const bare = boot(false);
-    expect(visibleRows(bare.ctx.uiRoot, 0)).toEqual(['ENTER THE PIT', 'SKILL TREE', 'SETTINGS', 'SOUND: OFF']);
+    expect(visibleRows(bare.ctx.uiRoot, 0)).toEqual(['ENTER THE PIT', 'SKILL TREE', 'CLASS', 'SETTINGS', 'SOUND: OFF']);
     const full = boot(true);
     const rows = visibleRows(full.ctx.uiRoot, 0);
     expect(rows).toContain('LOADOUT');

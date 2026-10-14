@@ -53,7 +53,7 @@ export function createSkillTree(ctx: GameContext, panel: HTMLElement, overlayRoo
   function nodePos(n: SkillDef, branchIndex: number): { x: number; y: number; size: number } {
     if (n.kind === 'capstone') {
       const mid = (3 * BRW + 2 * GAP) / 2;
-      return { x: mid - CAPPL / 2, y: TOP + 3 * ROWH, size: CAPPL };
+      return { x: mid - CAPPL / 2, y: TOP + 3 * ROWH + 8, size: CAPPL };
     }
     const bx = branchIndex * (BRW + GAP);
     return { x: bx + n.col * COLW + (COLW - PL) / 2, y: TOP + (n.tier - 1) * ROWH, size: PL };
@@ -100,7 +100,7 @@ export function createSkillTree(ctx: GameContext, panel: HTMLElement, overlayRoo
       if (!a || !b) continue;
       const ax = a.x + a.size / 2;
       const bx = b.x + b.size / 2;
-      const midY = b.y - 8;
+      const midY = b.y - 6;
       const on = p.rank(n.requires) > 0;
       svg += `<path d="M${ax} ${a.y + a.size} V ${midY} H ${bx} V ${b.y}" stroke="${on ? '#ECEAE4' : '#4A4C50'}" stroke-width="2" fill="none"/>`;
     }
@@ -108,7 +108,7 @@ export function createSkillTree(ctx: GameContext, panel: HTMLElement, overlayRoo
     const capNode = nodes.find((n) => n.kind === 'capstone');
     if (capNode) {
       const c = pos.get(capNode.id)!;
-      const cy = c.y - 12;
+      const cy = c.y - 20;
       const cx = c.x + c.size / 2;
       svg += `<path d="M${BRW / 2} ${cy} H ${2 * (BRW + GAP) + BRW / 2} M${cx} ${cy} V ${c.y}" stroke="${p.gateOpen(capNode.id) ? '#ECEAE4' : '#4A4C50'}" stroke-width="2" fill="none" stroke-dasharray="${p.gateOpen(capNode.id) ? '' : '6 4'}"/>`;
     }
@@ -140,7 +140,7 @@ export function createSkillTree(ctx: GameContext, panel: HTMLElement, overlayRoo
     }
 
     const planW = 4 * BRW + 3 * GAP;
-    const planH = TOP + 3 * ROWH + CAPPL + 40;
+    const planH = TOP + 3 * ROWH + 8 + CAPPL;
     panel.innerHTML = `
       <div class="sb-skills-head">
         <div><div class="sb-lbl">QUARTERS · TRAINING FLOOR</div>
@@ -188,8 +188,8 @@ export function createSkillTree(ctx: GameContext, panel: HTMLElement, overlayRoo
     const keyLive = false; // docs §5.1 player:activeKey — flip when the player binds the key
     const state = !a.unlocked ? 'LOCKED' : a.active ? `ACTIVE ${Math.ceil(a.activeLeft)} S` : a.ready ? 'READY' : `CD ${Math.ceil(a.cooldownLeft)} S`;
     const note = !a.unlocked
-      ? 'Unlocks with your first keystone.'
-      : !keyLive ? (p.dev ? `NEEDS WIRING · player:activeKey${def.liveEffect ? '' : ` + ${def.hook}`}` : 'Key binding arrives soon.') : '';
+      ? 'UNLOCKS WITH YOUR FIRST KEYSTONE'
+      : !keyLive ? (p.dev ? `NEEDS WIRING · player:activeKey${def.liveEffect ? '' : ` + ${def.hook}`}` : 'KEY BINDING ARRIVES SOON') : '';
     return `<div class="sb-active sb-panel${a.unlocked ? '' : ' locked'}">
       <div class="sb-tab"></div>
       <div class="hd"><span class="sb-lbl">ACTIVE · <span class="sb-key">${esc(def.key)}</span></span><span class="sb-lbl st">${state}</span></div>

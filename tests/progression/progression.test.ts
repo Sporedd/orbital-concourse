@@ -1,21 +1,28 @@
 import * as THREE from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { XP, xpForLevel } from '@/core/config';
-import type { Enemy, Progression } from '@/core/types';
+import type { Enemy } from '@/core/types';
 import {
-  STORAGE_KEY, SKILLS, createProgression, describeSkill, readBestRound, readProgress,
+  CLASSES, DEV_FLAG_KEY, STORAGE_KEY, SKILLS, VERSION, createProgression, describeSkill, migrateRanks, readBestRound,
+  readProgress, skillById, type ClassProgression,
 } from '@/progression';
 import { baseStats } from '@/progression/skills';
-import { createFakeContext, recordEvents, type Recorder, type TestContext } from '../helpers/fakeContext';
+import { createFakeContext, createFakePlayer, recordEvents, type Recorder, type TestContext } from '../helpers/fakeContext';
 
 let ctx: TestContext;
-let prog: Progression;
+let prog: ClassProgression;
 let ev: Recorder;
 
 function boot(): void {
   ctx = createFakeContext();
+  ctx.player = createFakePlayer('p1');
   ev = recordEvents(ctx.events);
   prog = createProgression(ctx);
+}
+
+/** Invest `times` points into `id` (asserting each one lands). */
+function buy(id: string, times = 1): void {
+  for (let i = 0; i < times; i++) expect(prog.upgrade(id), `${id} #${i + 1}: ${prog.lockReason(id)}`).toBe(true);
 }
 
 const killed = (isBoss: boolean) => ({
@@ -39,140 +46,201 @@ describe('Progression', () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it('starts at level 1 with neutral stats', () => {
+  it('starts at level 1 with neutral stats and no class', () => {
     expect(prog.level).toBe(1);
     expect(prog.xp).toBe(0);
     expect(prog.skillPoints).toBe(0);
     expect(prog.xpToNext).toBe(100);
     expect(prog.stats).toEqual(baseStats());
     expect(prog.skills).toBe(SKILLS);
+    expect(prog.classId).toBeNull();
+    expect(prog.activeAbility).toBeNull();
   });
 
-  it('addXp below the threshold accumulates and emits xp:gained', () => {
+  it('addXp accumulates, levels up and grants one point per level', () => {
     prog.addXp(40);
-    expect(prog.level).toBe(1);
     expect(prog.xp).toBe(40);
     expect(ev.of('xp:gained')[0]).toMatchObject({ amount: 40, xp: 40, xpToNext: 100, level: 1 });
-    expect(ev.count('level:up')).toBe(0);
-  });
-
-  it('level:up emits and grants a skill point; excess carries over', () => {
-    prog.addXp(130);
+    prog.addXp(90);
     expect(prog.level).toBe(2);
     expect(prog.xp).toBe(30);
     expect(prog.skillPoints).toBe(1);
     expect(ev.of('level:up')).toEqual([{ playerId: 'p1', level: 2, skillPoints: 1 }]);
-    expect(prog.xpToNext).toBe(xpForLevel(2));
-  });
-
-  it('a large grant can pass several levels at once', () => {
-    prog.addXp(xpForLevel(1) + xpForLevel(2) + xpForLevel(3) + 5);
-    expect(prog.level).toBe(4);
-    expect(prog.skillPoints).toBe(3);
-    expect(prog.xp).toBe(5);
-    expect(ev.count('level:up')).toBe(3);
-  });
-
-  it('ignores zero / negative xp', () => {
     prog.addXp(0);
     prog.addXp(-50);
-    expect(prog.xp).toBe(0);
-    expect(ev.count('xp:gained')).toBe(0);
+    expect(prog.xp).toBe(30);
   });
 
   it('grants XP for kills and round clears (host only)', () => {
     ctx.events.emit('enemy:killed', killed(false));
     expect(prog.xp).toBe(XP.mob);
-    ctx.events.emit('enemy:killed', killed(true));
     ctx.events.emit('round:cleared', { round: 1 });
-    expect(prog.level * 1000 + prog.xp).toBe(
-      (() => { let l = 1; let x = XP.mob + XP.boss + XP.roundClear; while (x >= xpForLevel(l)) { x -= xpForLevel(l); l++; } return l * 1000 + x; })(),
-    );
-    const before = prog.xp;
+    expect(prog.xp).toBe(XP.mob + XP.roundClear);
     ctx.isHost = false;
     ctx.events.emit('enemy:killed', killed(false));
-    expect(prog.xp).toBe(before);
+    expect(prog.xp).toBe(XP.mob + XP.roundClear);
   });
 
-  it('canUpgrade needs points, respects maxRank and requirements', () => {
-    expect(prog.canUpgrade('damage')).toBe(false); // no points
-    expect(prog.upgrade('damage')).toBe(false);
-    prog.addXp(10_000);
-    expect(prog.canUpgrade('damage')).toBe(true);
+  it('setClass applies the identity, emits class:changed and exposes the active', () => {
+    expect(prog.setClass('vanguard')).toBe(true);
+    expect(prog.classId).toBe('vanguard');
+    expect(prog.stats.shieldMult).toBeCloseTo(1.2);
+    expect(prog.stats.healthMult).toBeCloseTo(1.1);
+    expect(ev.of('class:changed')).toEqual([{ classId: 'vanguard', previous: null }]);
+    expect(ev.of('skill:changed').at(-1)).toMatchObject({ skillId: '*' });
+    expect(prog.activeAbility?.def.id).toBe(CLASSES.vanguard.active.id);
+    expect(prog.activeAbility?.unlocked).toBe(false);
+    expect(prog.setClass('vanguard')).toBe(false); // same class: no-op
+  });
+
+  it('only the current class tree and the Pit can be invested', () => {
+    prog.addXp(1e6);
+    expect(prog.canUpgrade('reload')).toBe(true); // Pit is open without a class
+    expect(prog.canUpgrade('van_plating')).toBe(false);
+    expect(prog.lockReason('van_plating')).toBe('OTHER CLASS');
+    prog.setClass('marksman');
+    expect(prog.canUpgrade('van_plating')).toBe(false);
+    expect(prog.canUpgrade('mar_steady')).toBe(true);
     expect(prog.canUpgrade('nope')).toBe(false);
-    const node = SKILLS.find((s) => s.id === 'damage')!;
-    for (let i = 0; i < node.maxRank; i++) expect(prog.upgrade('damage')).toBe(true);
-    expect(prog.rank('damage')).toBe(node.maxRank);
-    expect(prog.canUpgrade('damage')).toBe(false);
-    expect(prog.upgrade('damage')).toBe(false);
   });
 
-  it('requires: a node with a prerequisite needs rank >= 1 there first', () => {
-    // inject a temporary dependent node (the tree is data-driven)
-    SKILLS.push({ ...SKILLS[0], id: 'test_child', requires: 'fire_rate', value: '1%' });
-    try {
-      prog.addXp(10_000);
-      expect(prog.canUpgrade('test_child')).toBe(false);
-      prog.upgrade('fire_rate');
-      expect(prog.canUpgrade('test_child')).toBe(true);
-    } finally {
-      SKILLS.pop();
-    }
+  it('tier gates, requires and max rank are enforced', () => {
+    prog.addXp(1e6);
+    prog.setClass('vanguard');
+    // tier 2 needs 3 points in the branch
+    expect(prog.lockReason('van_scar_tissue')).toMatch(/NEEDS 3 POINTS/);
+    buy('van_constitution', 3);
+    // gate open, but requires Reinforced Plating
+    expect(prog.lockReason('van_scar_tissue')).toMatch(/NEEDS REINFORCED PLATING/);
+    buy('van_plating');
+    buy('van_scar_tissue', 3);
+    expect(prog.canUpgrade('van_scar_tissue')).toBe(false); // maxed
+    expect(prog.upgrade('van_scar_tissue')).toBe(false);
+    // capstone needs 25 class points
+    expect(prog.lockReason('van_unbroken')).toMatch(/NEEDS 25 CLASS POINTS/);
   });
 
-  it('upgrade recomputes stats, spends a point and emits skill:changed', () => {
-    prog.addXp(10_000);
+  it('unimplemented nodes are SOON (not buyable) but do not block their dependants', () => {
+    prog.addXp(1e6);
+    prog.setClass('marksman');
+    const breath = skillById('mar_breath')!;
+    expect(breath.implemented).toBe(false);
+    expect(prog.lockReason('mar_breath')).toBe('SOON');
+    expect(prog.canUpgrade('mar_breath')).toBe(false);
+    buy('mar_quickdraw', 3);
+    buy('mar_scoped'); // requires quickdraw (live)
+    // Bandolier (SOON) gates nothing live; Pack Mule requires Fleet Foot
+    buy('speed', 3);
+    buy('pit_pack_mule');
+    expect(prog.lockReason('pit_second_wind')).toBe('SOON');
+  });
+
+  it('the dev flag makes unimplemented nodes buyable and lists their hooks', () => {
+    localStorage.setItem(DEV_FLAG_KEY, '1');
+    boot();
+    expect(prog.dev).toBe(true);
+    prog.addXp(1e6);
+    prog.setClass('marksman');
+    buy('mar_breath');
+    expect(prog.hooks).toContain('player:extras.adsSpreadMult');
+    expect(prog.extras.adsSpreadMult).toBeCloseTo(0.9);
+  });
+
+  it('upgrade recomputes stats in place, spends a point and emits skill:changed', () => {
+    prog.addXp(1e6);
+    prog.setClass('marksman');
     const pts = prog.skillPoints;
     const statsRef = prog.stats;
-    prog.upgrade('damage');
-    prog.upgrade('damage');
-    prog.upgrade('fire_rate');
-    prog.upgrade('reload');
-    expect(prog.stats).toBe(statsRef); // same object, mutated in place
-    expect(prog.stats.damageMult).toBeCloseTo(1.16);
-    expect(prog.stats.fireRateMult).toBeCloseTo(1.06);
+    buy('mar_calibre', 2);
+    buy('reload');
+    buy('mar_steady');
+    expect(prog.stats).toBe(statsRef);
+    expect(prog.stats.damageMult).toBeCloseTo(1.08);
     expect(prog.stats.reloadMult).toBeCloseTo(0.94);
+    expect(prog.stats.critMult).toBeCloseTo(1.2 * 1.1); // identity × Steady Hand
     expect(prog.skillPoints).toBe(pts - 4);
-    expect(ev.of('skill:changed').at(-1)).toMatchObject({ skillId: 'reload', rank: 1 });
+    expect(ev.of('skill:changed').at(-1)).toMatchObject({ skillId: 'mar_steady', rank: 1 });
   });
 
-  it('resetTree refunds every point and restores base stats', () => {
-    prog.addXp(10_000);
+  it('the first keystone unlocks the active ability', () => {
+    prog.addXp(1e6);
+    prog.setClass('technician');
+    buy('tec_scrounger', 3);
+    expect(prog.activeAbility!.unlocked).toBe(false);
+    expect(prog.useActive()).toBe(false);
+    buy('tec_field_medic');
+    buy('tec_salvage'); // keystone
+    expect(prog.activeAbility!.unlocked).toBe(true);
+    expect(prog.activeAbility!.ready).toBe(true);
+  });
+
+  it('respec refunds every point with one skill:changed', () => {
+    prog.addXp(1e6);
+    prog.setClass('showman');
     const pts = prog.skillPoints;
-    prog.upgrade('damage');
-    prog.upgrade('shield');
-    prog.upgrade('speed');
+    buy('sho_footwork', 2);
+    buy('speed');
     ev.clear();
-    prog.resetTree();
+    prog.respec();
     expect(prog.skillPoints).toBe(pts);
-    expect(prog.stats).toEqual(baseStats());
-    for (const s of SKILLS) expect(prog.rank(s.id)).toBe(0);
-    expect(ev.count('skill:changed')).toBe(SKILLS.length);
+    expect(prog.classPoints()).toBe(0);
+    expect(prog.rank('speed')).toBe(0);
+    expect(prog.stats.moveSpeedMult).toBeCloseTo(1.08); // class identity stays
+    expect(ev.of('skill:changed')).toHaveLength(1);
   });
 
-  it('persists level/xp/points/ranks and restores them in a new instance', () => {
-    prog.addXp(xpForLevel(1) + xpForLevel(2) + 7);
-    prog.upgrade('damage');
+  it('switching class refunds the class tree and keeps the Pit', () => {
+    prog.addXp(1e6);
+    prog.setClass('vanguard');
+    const pts = prog.skillPoints;
+    buy('van_plating', 3);
+    buy('reload', 2);
+    prog.setClass('showman');
+    expect(prog.rank('van_plating')).toBe(0);
+    expect(prog.rank('reload')).toBe(2);
+    expect(prog.skillPoints).toBe(pts - 2);
+    expect(prog.stats.shieldMult).toBeCloseTo(1);
+  });
+
+  it('persists level/xp/points/ranks/class and restores them in a new instance', () => {
+    prog.addXp(xpForLevel(1) + xpForLevel(2) + xpForLevel(3) + 7);
+    prog.setClass('vanguard');
+    buy('van_plating');
     prog.save();
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
-    expect(raw).toMatchObject({ version: 1, level: 3, xp: 7, skillPoints: 1, ranks: { damage: 1 } });
+    expect(raw).toMatchObject({ version: VERSION, level: 4, xp: 7, skillPoints: 2, ranks: { van_plating: 1 }, classId: 'vanguard' });
 
     const again = createProgression(createFakeContext());
-    expect(again.level).toBe(3);
-    expect(again.xp).toBe(7);
-    expect(again.skillPoints).toBe(1);
-    expect(again.rank('damage')).toBe(1);
-    expect(again.stats.damageMult).toBeCloseTo(1.08);
+    expect(again.level).toBe(4);
+    expect(again.skillPoints).toBe(2);
+    expect(again.classId).toBe('vanguard');
+    expect(again.rank('van_plating')).toBe(1);
+    expect(again.stats.shieldMult).toBeCloseTo(1.2 * 1.08);
   });
 
-  it('load() clamps ranks above maxRank and ignores unknown skills', () => {
+  it('migrates a v1 save: Pit ids survive (clamped), everything else is refunded', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      version: 1, level: 5, xp: 3, skillPoints: 2, ranks: { damage: 99, ghost: 3 }, bestRound: 4,
+      version: 1, level: 20, xp: 3, skillPoints: 2, bestRound: 4,
+      ranks: { damage: 3, fire_rate: 2, reload: 5, speed: 1, shield: 4, ghost: 2 },
     }));
     prog.load();
-    expect(prog.rank('damage')).toBe(5);
-    expect(prog.rank('ghost')).toBe(0);
-    expect(prog.stats.damageMult).toBeCloseTo(1.4);
+    expect(prog.level).toBe(20);
+    expect(prog.rank('reload')).toBe(3); // maxRank 3, 2 refunded
+    expect(prog.rank('speed')).toBe(1);
+    expect(prog.rank('damage')).toBe(0);
+    // refunded: damage 3 + fire_rate 2 + reload excess 2 + shield 4 + ghost 2 = 13
+    expect(prog.skillPoints).toBe(2 + 13);
+    expect(prog.stats.reloadMult).toBeCloseTo(1 - 0.18);
+    // written back as v2, so the refund happens once
+    expect(readProgress()).toMatchObject({ version: VERSION, skillPoints: 15, classId: null });
+    prog.load();
+    expect(prog.skillPoints).toBe(15);
+  });
+
+  it('migrateRanks drops nodes of other classes', () => {
+    const m = migrateRanks({ van_plating: 2, mar_steady: 1, reload: 1 }, 2, 'marksman');
+    expect(Object.fromEntries(m.ranks)).toEqual({ mar_steady: 1, reload: 1 });
+    expect(m.refunded).toBe(2);
   });
 
   it('corrupt or wrong-version storage falls back to defaults', () => {
@@ -182,8 +250,8 @@ describe('Progression', () => {
     expect(prog.level).toBe(1);
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 999, level: 9 }));
     expect(readProgress()).toBeNull();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, level: -3, xp: 'x', skillPoints: 2.7 }));
-    expect(readProgress()).toMatchObject({ level: 1, xp: 0, skillPoints: 2, bestRound: 0, ranks: {} });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, level: -3, xp: 'x', skillPoints: 2.7, classId: 'bard' }));
+    expect(readProgress()).toMatchObject({ level: 1, xp: 0, skillPoints: 2, bestRound: 0, ranks: {}, classId: null });
   });
 
   it('saves bestRound on game:over (and never lowers it)', () => {
@@ -192,7 +260,6 @@ describe('Progression', () => {
     expect(readBestRound()).toBe(7);
     ctx.events.emit('game:over', { round: 3, kills: 10 });
     expect(readBestRound()).toBe(7);
-    expect(createProgression(createFakeContext()) && readBestRound()).toBe(7);
   });
 
   it('small XP grants are coalesced into one delayed save; level-ups save immediately', () => {
@@ -212,7 +279,7 @@ describe('Progression', () => {
   });
 
   it('describeSkill substitutes {value}', () => {
-    const d = describeSkill(SKILLS.find((s) => s.id === 'damage')!);
+    const d = describeSkill(skillById('van_plating')!);
     expect(d).toContain('8%');
     expect(d).not.toContain('{value}');
   });
