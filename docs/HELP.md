@@ -326,7 +326,7 @@ Hazards run only during waves and boss fights. The round banner announces them (
 
 ## 13 · Controls
 
-*Keyboard and mouse.*
+*Keyboard and mouse; touch controls on phones.*
 
 ### Fighting
 
@@ -368,3 +368,14 @@ Hazards run only during waves and boss fights. The round banner announces them (
 | <kbd>H ESC</kbd> | Close |
 
 Mouse sensitivity and sound are in SETTINGS on the start and pause screens.
+
+### Mobile (touch)
+
+- Play in landscape. The first tap goes full screen where the browser allows it; sound stays off until you turn it on.
+- **Left thumb:** a stick appears where the thumb lands. Push past its ring to sprint.
+- **Right thumb:** drag to look; a slow drag is precise, a quick swipe turns further. Dragging on FIRE also aims while you shoot.
+- **FIRE** shoots while held (semi-automatic guns repeat at their fire rate). **AUTO** fire is on by default: once the crosshair has rested on an enemy for a moment it holds the trigger, using the gun’s own fire rate, spread and range.
+- **AIM** toggles aim down sights. JUMP, RELOAD, MELEE, GREN (grenade), SWAP (next weapon) and SKILL (class active) sit around FIRE.
+- **TAKE** and **SALVAGE** appear next to a dropped gun. In co-op, hold TAKE to revive.
+- The top bar opens pause, help, the skill tree and (at the pit stop) the shop. LOADOUT and CO-OP are on the pause and start menus.
+- Look sensitivity and auto-fire are in SETTINGS (saved on the phone). Add the game to the home screen to play without the browser bars.

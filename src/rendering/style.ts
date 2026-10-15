@@ -143,7 +143,7 @@ const SPEC_SPOTS: Record<LeagueKey, number> = { scrap: 2, iron: 4, steel: 4, sta
 // ---------------------------------------------------------------------------
 // Quality preset (§5: "Low-quality preset: max 4 real spots, the rest pools only")
 // ---------------------------------------------------------------------------
-export type Quality = 'high' | 'low';
+export type Quality = 'high' | 'low' | 'mobile';
 
 export interface QualitySettings {
   /** Real SpotLights per league at most (the rest keep their shaft + pool). */
@@ -155,11 +155,26 @@ export interface QualitySettings {
   bloomScale: number;
   /** Real PointLights for fire sites (the rest keep glow + floor pool). */
   fireLights: number;
+  /** Renderer pixel ratio as a fraction of CSS pixels (mobile only; unset = device ratio). */
+  renderScale?: number;
+  /** Crowd instances × this (mobile only). */
+  crowdScale?: number;
+  /** Hanging chain links drawn × this (mobile only). */
+  chainScale?: number;
+  /** Particle burst counts × this (mobile only). */
+  particleScale?: number;
+  /** One ground-haze quad and two stand-haze layers instead of 2 + 3 (mobile only). */
+  cheapHaze?: boolean;
 }
 
 export const QUALITY_PRESETS: Record<Quality, QualitySettings> = {
   high: { maxSpots: 8, shadowMapSize: 2048, shaftMotes: 30, bloomScale: 1, fireLights: 6 },
   low: { maxSpots: 4, shadowMapSize: 1024, shaftMotes: 12, bloomScale: 0.5, fireLights: 3 },
+  /** Phones and tablets: requested only by src/mobile/quality.ts (?quality= still overrides). */
+  mobile: {
+    maxSpots: 2, shadowMapSize: 1024, shaftMotes: 6, bloomScale: 0.25, fireLights: 2,
+    renderScale: 0.7, crowdScale: 0.35, chainScale: 0.5, particleScale: 0.5, cheapHaze: true,
+  },
 };
 
 function readQuality(): Quality {

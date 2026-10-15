@@ -1,4 +1,21 @@
 /**
+ * Injection API for a non-keyboard input source (src/mobile/touch layer): key codes and mouse
+ * buttons are the same names the keyboard/mouse path uses, look deltas are in mouse pixels.
+ */
+export interface VirtualInput {
+  /** Look movement in mouse pixels (ignored while unlocked, like mousemove). */
+  look(dx: number, dy: number): void;
+  /** Hold a key (KeyboardEvent.code: 'KeyW', 'Space', 'ShiftLeft', 'Escape'...). */
+  press(code: string): void;
+  release(code: string): void;
+  /** Hold a mouse button (0 fire, 2 aim). */
+  pressMouse(button: number): void;
+  releaseMouse(button: number): void;
+  /** Mouse-wheel steps (sign only: +1 next weapon, -1 previous). */
+  wheel(steps: number): void;
+}
+
+/**
  * Keyboard/mouse state with pointer lock. Key names are KeyboardEvent.code
  * ('KeyW', 'Space', 'ShiftLeft', 'Digit1', 'Tab', 'Escape'...). Mouse buttons: 0 left, 1 middle, 2 right.
  * Only the local player controller and the UI read this (co-op rule).
@@ -124,6 +141,46 @@ export class Input {
     return this.uiCaptured ? { dx: 0, dy: 0 } : { dx: this.dx, dy: this.dy };
   }
   wheelDelta(): number { return this.uiCaptured ? 0 : this.wheel; }
+
+  /**
+   * Programmatic input source (the touch layer in src/mobile is the only caller). It drives the
+   * same key / button / look state the keyboard and mouse do, so every reader (controller,
+   * weapons, UI) sees ordinary input. Touch screens have no pointer lock: from now on lock()
+   * and unlock() use the virtual lock (the same state as the lockless fallback above).
+   * Never called on desktop, where nothing here changes.
+   */
+  attachVirtual(): VirtualInput {
+    if (!this.lockless) {
+      this.lockless = true;
+      this.virtualLocked = false;
+    }
+    return {
+      look: (dx, dy) => {
+        if (!this.locked()) return; // same rule as mousemove
+        this.dx += dx;
+        this.dy += dy;
+      },
+      press: (code) => {
+        if (!this.down.has(code)) this.pressed.add(code); // a held key is not pressed again
+        this.down.add(code);
+      },
+      release: (code) => {
+        if (!this.down.has(code)) return;
+        this.down.delete(code);
+        this.released.add(code);
+      },
+      pressMouse: (button) => {
+        if (!this.mouseDown.has(button)) this.mousePressed.add(button);
+        this.mouseDown.add(button);
+      },
+      releaseMouse: (button) => {
+        this.mouseDown.delete(button);
+      },
+      wheel: (steps) => {
+        this.wheel += Math.sign(steps);
+      },
+    };
+  }
 
   /** Called by main.ts at the end of every frame. */
   endFrame(): void {

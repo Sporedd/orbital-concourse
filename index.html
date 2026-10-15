@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Orbital Concourse</title>
     <link rel="icon" href="data:," />
+    <!-- PWA (home-screen install on phones). Relative hrefs: the site lives under /orbital-concourse/ on GitHub Pages. -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0c0d0e" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style>
       html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0c0d0e; }
       #app { position: fixed; inset: 0; display: block; }
