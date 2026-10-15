@@ -12,6 +12,7 @@ import { RARITY_COLORS, type GameContext, type LootItemState, type Rarity, type 
 import { LOOT } from '@/core/config';
 import { BEAM, PALETTE, glowLum } from '@/rendering/style';
 import { buildGearModel, type GearModel } from '@/gear/models';
+import { GUN_COLORS, GUN_LUM, gunBlueprint, gunSlotMaterials, instantiateGun } from '@/player/weaponModels';
 
 const BLINK_WINDOW = 10;
 
@@ -41,14 +42,8 @@ function dashedRing(inner: number, outer: number, dashes: number): THREE.BufferG
   return m;
 }
 
-/** Gun silhouette proportions per archetype: [bodyLen, barrelLen, barrelThick, stock]. */
-const GUN_SHAPE: Record<WeaponArchetype, [number, number, number, boolean]> = {
-  pistol: [0.28, 0.16, 0.06, false],
-  smg: [0.36, 0.2, 0.06, false],
-  shotgun: [0.44, 0.36, 0.09, true],
-  rifle: [0.5, 0.3, 0.06, true],
-  sniper: [0.56, 0.5, 0.05, true],
-};
+/** Weapon icon scale per archetype (the low-detail viewmodel gun, src/player/weaponModels.ts). */
+const GUN_ICON_SCALE: Record<WeaponArchetype, number> = { pistol: 1.6, smg: 1.35, shotgun: 1.15, rifle: 1.15, sniper: 1.0 };
 
 const beamVert = /* glsl */ `
 varying float vY;
@@ -211,18 +206,19 @@ export function createLootView(ctx: GameContext): LootView {
     const seam = glow(color, item.rarity === 'legendary' ? 2.5 : 1.2);
     switch (item.kind) {
       case 'weapon': {
+        // the viewmodel gun at low detail (one merged mesh), barrel along +x, centred
         const w = item.weapon!;
-        const [len, barrel, thick, stock] = GUN_SHAPE[w.archetype];
-        const body = toon(PALETTE.STEEL);
-        const dark = toon(PALETTE.STEEL_DARK);
-        g.add(box(body, len, 0.12, 0.08, 0, 0, 0));
-        g.add(box(seam, len * 0.8, 0.018, 0.084, 0, 0.02, 0)); // rarity seam
-        g.add(box(dark, barrel, thick, thick, len / 2 + barrel / 2, 0.02, 0));
-        g.add(box(dark, 0.07, 0.16, 0.07, -len * 0.25, -0.13, 0)); // grip
-        if (w.archetype !== 'pistol') g.add(box(dark, 0.06, 0.12, 0.06, len * 0.1, -0.11, 0)); // mag
-        if (stock) g.add(box(dark, 0.18, 0.1, 0.06, -len / 2 - 0.09, -0.02, 0));
-        if (w.archetype === 'sniper') g.add(box(dark, 0.18, 0.05, 0.05, 0, 0.1, 0)); // scope
-        g.scale.setScalar(1.25);
+        const bp = gunBlueprint(w.archetype, 'lo');
+        const mats = gunSlotMaterials((c) => toon(c, 'character'), (c, lum) => glow(c, lum), seam, glow(GUN_COLORS.lens, GUN_LUM.lens, 0.5));
+        const gun = instantiateGun(bp, mats, true);
+        const bb = new THREE.Box3();
+        for (const n of bp.nodes) bb.union(n.geometry.boundingBox!);
+        gun.position.copy(bb.getCenter(new THREE.Vector3())).negate();
+        const turn = new THREE.Group();
+        turn.rotation.y = -Math.PI / 2;
+        turn.add(gun);
+        g.add(turn);
+        g.scale.setScalar(GUN_ICON_SCALE[w.archetype] ?? 1.15);
         break;
       }
       case 'ammo': {

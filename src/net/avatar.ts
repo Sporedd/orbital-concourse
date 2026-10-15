@@ -6,22 +6,18 @@
  */
 import * as THREE from 'three';
 import type { GameContext, WeaponArchetype } from '@/core/types';
-import { RARITY_COLORS, type Rarity } from '@/core/types';
+import type { Rarity } from '@/core/types';
 import { buildGearModel, type GearModel } from '@/gear/models';
 import { GEAR_SLOTS, type GearSlot, type Loadout } from '@/gear/types';
+import { GUN_COLORS, GUN_LUM, gunBlueprint, gunSlotMaterials, instantiateGun, type GunSlot } from '@/player/weaponModels';
+import { glowLum } from '@/rendering/style';
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const SPHERE = new THREE.SphereGeometry(1, 12, 9);
 const CYL = new THREE.CylinderGeometry(1, 1, 1, 8);
 
-/** [bodyLength, barrelLength, barrelThickness, hasStock] (metres), like the loot icon. */
-const GUN_SHAPE: Record<WeaponArchetype, [number, number, number, boolean]> = {
-  pistol: [0.22, 0.12, 0.05, false],
-  smg: [0.32, 0.16, 0.05, false],
-  shotgun: [0.42, 0.34, 0.08, true],
-  rifle: [0.46, 0.28, 0.05, true],
-  sniper: [0.5, 0.46, 0.045, true],
-};
+/** The held gun is the viewmodel gun at low detail; its grip sits this far behind the old gun centre. */
+const GUN_GRIP_Z = 0.06;
 
 /** Stable per-player suit colour. */
 const SUIT_COLORS = [0x3d6fd8, 0xd8573d, 0x3dbf6a, 0xc9a53d, 0x9b4dd8, 0x3dc2c9];
@@ -58,6 +54,8 @@ export class Avatar {
   private readonly flashMesh: THREE.Mesh;
   private readonly owned: THREE.Material[] = [];
   private gunMats: THREE.Material[] = [];
+  /** Shared (per avatar) gun surfaces; the seam material is per weapon (gunMats). */
+  private gunSlots: Record<GunSlot, THREE.Material> | null = null;
   private gunKey = '';
   private walkPhase = 0;
   private speed = 0;
@@ -184,28 +182,30 @@ export class Avatar {
     for (const mm of this.gunMats) mm.dispose();
     this.gunMats = [];
     if (!archetype) return;
-    const [len, barrel, thick, stock] = GUN_SHAPE[archetype];
-    const bodyMat = this.ctx.materials.toon({ color, emissive: color, emissiveIntensity: 0.2 });
-    const darkMat = this.ctx.materials.toon({ color: 0x2a2c33 });
-    const trimMat = this.ctx.materials.glow(RARITY_COLORS[rarity] ?? 0xffffff, 1.6);
-    this.gunMats.push(bodyMat, darkMat, trimMat);
-    const box = (mat: THREE.Material, sx: number, sy: number, sz: number, x: number, y: number, z: number) => {
-      const mesh = new THREE.Mesh(BOX, mat);
-      mesh.scale.set(sx, sy, sz);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      mesh.raycast = () => {};
-      this.gun.add(mesh);
-    };
-    // gun points along -Z
-    box(bodyMat, 0.07, 0.1, len, 0, 0, 0);
-    box(darkMat, thick, thick, barrel, 0, 0.015, -len / 2 - barrel / 2);
-    box(darkMat, 0.06, 0.13, 0.06, 0, -0.1, len * 0.2);
-    box(trimMat, 0.075, 0.02, len * 0.6, 0, 0.055, 0);
-    if (archetype !== 'pistol') box(bodyMat, 0.05, 0.11, 0.06, 0, -0.1, -len * 0.1);
-    if (stock) box(darkMat, 0.05, 0.09, 0.16, 0, -0.02, len / 2 + 0.08);
-    if (archetype === 'sniper') box(darkMat, 0.045, 0.045, 0.16, 0, 0.09, 0);
-    this.muzzle.position.set(0, 0.015, -len / 2 - barrel - 0.03);
+    // the viewmodel gun at low detail (one merged mesh); the weapon colour (rarity/element) is
+    // its seam, everything else is the shared matte-black/steel kit
+    const seam = this.ctx.materials.glow(color, glowLum(color, rarity === 'common' ? 0.5 : 1.4, 12));
+    this.gunMats.push(seam);
+    if (!this.gunSlots) {
+      const lens = this.ctx.materials.glow(GUN_COLORS.lens, glowLum(GUN_COLORS.lens, GUN_LUM.lens, 12));
+      lens.transparent = true;
+      lens.opacity = 0.5;
+      lens.depthWrite = false;
+      const owned: THREE.Material[] = [lens];
+      const make = <M extends THREE.Material>(m: M) => (owned.push(m), m);
+      this.gunSlots = gunSlotMaterials(
+        (c) => make(this.ctx.materials.toon({ color: c, surface: 'character' })),
+        (c, lum) => make(this.ctx.materials.glow(c, glowLum(c, lum, 12))),
+        seam, lens,
+      );
+      this.owned.push(...owned);
+    }
+    const bp = gunBlueprint(archetype, 'lo');
+    const model = instantiateGun(bp, { ...this.gunSlots, accent: seam }, true);
+    model.position.z = GUN_GRIP_Z;
+    model.traverse((o) => { o.raycast = () => {}; });
+    this.gun.add(model);
+    this.muzzle.position.copy(bp.muzzle).add(model.position);
   }
 
   /** Wear a loadout (co-op: the other peer's equipped gear). Unchanged pieces are kept. */

@@ -17,6 +17,7 @@ import { ELEMENT_COLORS, RARITY_COLORS } from '@/core/types';
 import { PALETTE, glowLum } from '@/rendering/style';
 import type { GameContext, WeaponArchetype, WeaponDef } from '@/core/types';
 import { applyWeaponGrowth } from '@/gear/weaponGrowth';
+import { GUN_COLORS, GUN_LUM, GUN_SIGHT_Y, gunBlueprint, gunSlotMaterials, instantiateGun } from './weaponModels';
 import { buildGloveViewmodel, type GearModel } from '@/gear/models';
 import type { GearDef } from '@/gear/types';
 import type { Controller } from './controller';
@@ -58,18 +59,24 @@ const FLASH_LIGHT_AHEAD = 1.1;
  * ADS "sights" pose: the pivot offset (pivot units) that puts the gun's sight line on the screen
  * centre. x cancels VM_BASE.x, y lifts the sight (model y = SIGHT_Y) to the eye line.
  */
-const SIGHT_Y: Record<WeaponArchetype, number> = { pistol: 0.108, smg: 0.118, shotgun: 0.1, rifle: 0.166, sniper: 0.145 };
+const SIGHT_Y = GUN_SIGHT_Y;
 const ADS_X = -VM_BASE.x / VM_SCALE;
 const ADS_Y = -VM_BASE.y / VM_SCALE;
-/** Pivot z offset while aimed: pushed a little forward so the zoomed FOV doesn't blow the gun up. */
-const ADS_PULL = -0.12;
+/**
+ * Pivot z offset while aimed: iron-sighted guns are pushed a little forward so the zoomed FOV
+ * doesn't blow the gun up; the rifle comes back toward the eye so its holo window reads.
+ */
+const ADS_PULL: Record<WeaponArchetype, number> = { pistol: -0.12, smg: -0.1, shotgun: -0.12, rifle: 0.04, sniper: -0.12 };
 /** Sway/bob that remains while fully aimed. */
 const ADS_STEADY = 0.25;
 
-// Brutalist Arena gun (docs/ART_DIRECTION.md §8): STEEL receiver, STEEL_DARK polymer, a rarity
-// (or element) seam as the only colour, matte character surfaces.
+// Gun models: src/player/weaponModels.ts (docs/concepts/E-weapon-sheet.png). A rarity (or
+// element) seam is the only per-item colour; matte character surfaces.
 const STEEL = PALETTE.STEEL;
-const DARK = PALETTE.STEEL_DARK;
+/** Self-lit floor of the gun surfaces (emissive = albedo x this). */
+const GUN_SELF_LIT = 0.3;
+/** Hip pose: the muzzle turns a touch toward the screen centre, showing the gun's left side. */
+const HIP_YAW = 0.06;
 const SLEEVE = 0x3a3d38;
 const GLOVE = 0x1e1f1c;
 /** Hand-held grenade: the world grenade's look (src/player/grenades.ts), copied, not imported. */
@@ -77,7 +84,7 @@ const GRENADE_BODY = 0x4d5e3a;
 const GRENADE_CAP = 0x2a2e38;
 const GRENADE_SPARK = 0xffa040;
 
-/** Small builder that tracks geometries for disposal. */
+/** Small builder for the arm, hands, shell and grenade; tracks geometries for disposal. */
 class Parts {
   constructor(private readonly group: THREE.Group, private readonly geoms: THREE.BufferGeometry[]) {}
 
@@ -116,103 +123,7 @@ class Parts {
     this.group.add(m);
     return m;
   }
-
-  /** A sub-group at (x, y, z) with its own builder (moving assemblies: the sniper bolt). */
-  child(x: number, y: number, z: number): [THREE.Group, Parts] {
-    const g = new THREE.Group();
-    g.position.set(x, y, z);
-    this.group.add(g);
-    return [g, new Parts(g, this.geoms)];
-  }
 }
-
-interface GunMats {
-  body: THREE.Material;
-  dark: THREE.Material;
-  accent: THREE.Material;
-}
-
-type GunBuilder = (p: Parts, m: GunMats) => THREE.Vector3; // returns muzzle position
-
-const BUILDERS: Record<WeaponArchetype, GunBuilder> = {
-  pistol(p, m) {
-    p.box(0.065, 0.07, 0.3, m.body, 0, 0.05, -0.1).userData.vmAnim = 'slide'; // slide
-    p.box(0.06, 0.045, 0.22, m.dark, 0, 0.0, -0.08); // frame
-    p.box(0.055, 0.15, 0.075, m.dark, 0, -0.08, 0.02, -0.25); // grip
-    // magazine inside the grip (hidden while seated; animation-only tag, so weapon growth leaves it)
-    p.box(0.044, 0.135, 0.058, m.dark, 0, -0.085, 0.022, -0.25).userData.vmAnim = 'mag';
-    p.box(0.012, 0.05, 0.05, m.dark, 0, -0.035, -0.06); // trigger guard
-    p.cyl(0.017, 0.06, m.dark, 0, 0.05, -0.27).userData.vmRole = 'barrel';
-    p.box(0.07, 0.012, 0.2, m.accent, 0, 0.068, -0.1).userData.vmAnim = 'slide'; // glow strip
-    p.box(0.012, 0.022, 0.02, m.accent, 0, 0.095, -0.22).userData.vmAnim = 'slide'; // front sight
-    p.box(0.058, 0.02, 0.02, m.accent, 0, -0.15, 0.04, -0.25).userData.vmAnim = 'magPart'; // grip cap = mag base plate
-    return new THREE.Vector3(0, 0.05, -0.31);
-  },
-  smg(p, m) {
-    p.box(0.08, 0.1, 0.34, m.body, 0, 0.04, -0.12); // receiver
-    p.cyl(0.026, 0.14, m.dark, 0, 0.05, -0.36, 8).userData.vmRole = 'barrel'; // shroud
-    p.cyl(0.014, 0.06, m.dark, 0, 0.05, -0.46).userData.vmRole = 'barrel'; // chained after the shroud
-    p.box(0.045, 0.26, 0.06, m.dark, 0, -0.13, -0.17, 0.12).userData.vmRole = 'mag'; // long mag
-    p.box(0.05, 0.022, 0.066, m.accent, 0, -0.22, -0.18, 0.12).userData.vmRole = 'magEnd'; // mag band
-    p.box(0.05, 0.13, 0.07, m.dark, 0, -0.07, 0.03, -0.25); // grip
-    p.box(0.05, 0.06, 0.1, m.dark, 0, 0.04, 0.09); // stub stock
-    p.box(0.084, 0.016, 0.26, m.accent, 0, 0.065, -0.12); // side strip
-    p.box(0.02, 0.03, 0.04, m.dark, 0, 0.1, -0.02); // rear sight
-    p.box(0.024, 0.02, 0.032, m.dark, -0.05, 0.07, -0.2).userData.vmAnim = 'handle'; // left cocking knob
-    return new THREE.Vector3(0, 0.05, -0.5);
-  },
-  shotgun(p, m) {
-    p.box(0.1, 0.11, 0.26, m.body, 0, 0.03, -0.04); // receiver
-    p.cyl(0.025, 0.52, m.dark, -0.026, 0.065, -0.42, 10).userData.vmRole = 'barrel';
-    p.cyl(0.025, 0.52, m.dark, 0.026, 0.065, -0.42, 10).userData.vmRole = 'barrel';
-    p.box(0.1, 0.06, 0.18, m.body, 0, 0.01, -0.34).userData.vmAnim = 'pump'; // forend
-    p.box(0.11, 0.016, 0.03, m.accent, 0, 0.098, -0.62).userData.vmRole = 'muzzle'; // muzzle band
-    p.box(0.11, 0.016, 0.03, m.accent, 0, 0.032, -0.62).userData.vmRole = 'muzzle';
-    p.box(0.104, 0.018, 0.2, m.accent, 0, 0.05, -0.04); // receiver strip
-    p.box(0.07, 0.1, 0.24, m.body, 0, -0.02, 0.21, 0.14); // stock
-    p.box(0.05, 0.12, 0.07, m.dark, 0, -0.07, 0.06, -0.3); // grip
-    return new THREE.Vector3(0, 0.065, -0.69);
-  },
-  rifle(p, m) {
-    p.box(0.08, 0.11, 0.42, m.body, 0, 0.04, -0.12); // receiver
-    p.box(0.072, 0.075, 0.18, m.dark, 0, 0.035, -0.4); // handguard
-    p.cyl(0.018, 0.24, m.dark, 0, 0.06, -0.5).userData.vmRole = 'barrel';
-    p.box(0.05, 0.17, 0.08, m.dark, 0, -0.09, -0.13, 0.25).userData.vmRole = 'mag'; // mag
-    p.box(0.05, 0.13, 0.07, m.dark, 0, -0.07, 0.05, -0.25); // grip
-    p.box(0.06, 0.1, 0.2, m.body, 0, 0.02, 0.19); // stock
-    p.box(0.03, 0.016, 0.26, m.dark, 0, 0.103, -0.12); // scope rail
-    p.box(0.045, 0.05, 0.06, m.dark, 0, 0.135, -0.08).userData.vmRole = 'scope'; // red-dot housing
-    p.box(0.032, 0.032, 0.006, m.accent, 0, 0.138, -0.112).userData.vmRole = 'scope'; // lens
-    p.box(0.084, 0.016, 0.3, m.accent, 0, 0.06, -0.14); // side strip
-    p.box(0.076, 0.012, 0.02, m.accent, 0, 0.07, -0.47); // handguard band
-    p.box(0.07, 0.014, 0.018, m.dark, 0, 0.1, 0.085).userData.vmAnim = 'handle'; // T charging handle
-    return new THREE.Vector3(0, 0.06, -0.63);
-  },
-  sniper(p, m) {
-    p.box(0.08, 0.1, 0.46, m.body, 0, 0.04, -0.1); // receiver
-    p.cyl(0.017, 0.52, m.dark, 0, 0.055, -0.58).userData.vmRole = 'barrel'; // long barrel
-    p.box(0.045, 0.036, 0.07, m.dark, 0, 0.055, -0.86).userData.vmRole = 'muzzle'; // muzzle brake
-    p.box(0.05, 0.012, 0.074, m.accent, 0, 0.075, -0.86).userData.vmRole = 'muzzle';
-    p.cyl(0.032, 0.28, m.dark, 0, 0.145, -0.1, 12).userData.vmRole = 'scope'; // scope tube
-    p.cyl(0.04, 0.05, m.dark, 0, 0.145, -0.25, 12).userData.vmRole = 'scope'; // objective bell
-    p.cyl(0.034, 0.008, m.accent, 0, 0.145, -0.278, 12).userData.vmRole = 'scope'; // front lens
-    p.cyl(0.026, 0.008, m.accent, 0, 0.145, 0.042, 12).userData.vmRole = 'scope'; // eyepiece
-    p.box(0.02, 0.05, 0.02, m.dark, 0, 0.105, -0.18).userData.vmRole = 'scope'; // scope rings
-    p.box(0.02, 0.05, 0.02, m.dark, 0, 0.105, -0.02).userData.vmRole = 'scope';
-    p.box(0.065, 0.12, 0.26, m.body, 0, 0.0, 0.25); // stock
-    p.box(0.05, 0.08, 0.08, m.dark, 0, -0.04, -0.07).userData.vmRole = 'mag'; // mag
-    p.box(0.05, 0.13, 0.07, m.dark, 0, -0.07, 0.06, -0.25); // grip
-    // bolt: body on the bore line (slides out the back when open), handle + knob out to the right
-    const [bolt, bp] = p.child(0.005, 0.07, 0.03);
-    bolt.userData.vmAnim = 'bolt';
-    bolt.userData.knob = new THREE.Vector3(0.075, 0, 0);
-    bp.cyl(0.018, 0.1, m.dark, 0, 0, 0, 8);
-    bp.box(0.07, 0.014, 0.014, m.dark, 0.035, 0, 0);
-    bp.sphere(0.016, m.dark, 0.075, 0, 0, 8);
-    p.box(0.084, 0.014, 0.36, m.accent, 0, 0.065, -0.1); // side strip
-    return new THREE.Vector3(0, 0.055, -0.9);
-  },
-};
 
 interface PartRest {
   obj: THREE.Object3D;
@@ -320,7 +231,6 @@ export class Viewmodel {
   readonly root = new THREE.Group();
   private readonly pivot = new THREE.Group();
   private model: THREE.Group | null = null;
-  private geoms: THREE.BufferGeometry[] = [];
   private readonly persistentGeoms: THREE.BufferGeometry[] = [];
 
   private current: WeaponDef | null = null;
@@ -383,6 +293,8 @@ export class Viewmodel {
 
   private readonly toonCache = new Map<number, THREE.Material>();
   private readonly glowCache = new Map<string, THREE.Material>();
+  private readonly gunCache = new Map<number, THREE.Material>();
+  private lens: THREE.Material | null = null;
 
   constructor(private readonly ctx: GameContext) {
     this.root.name = 'viewmodel';
@@ -443,6 +355,32 @@ export class Viewmodel {
       this.toonCache.set(color, m);
     }
     return m;
+  }
+
+  /**
+   * Gun surfaces: matte character toon with a broad sheen (the key light slides along the plates)
+   * and a small self-lit floor so the black plates stay readable dark grey in a dark arena.
+   */
+  private gunMat(color: number): THREE.Material {
+    let m = this.gunCache.get(color);
+    if (!m) {
+      m = this.ctx.materials.toon({ color, emissive: color, emissiveIntensity: GUN_SELF_LIT, surface: 'character', rim: 0.2, sheen: 0.08 });
+      this.gunCache.set(color, m);
+    }
+    return m;
+  }
+
+  /** Optic glass: a faint additive tint you can see through. */
+  private lensMat(): THREE.Material {
+    if (!this.lens) {
+      const m = this.ctx.materials.glow(GUN_COLORS.lens, glowLum(GUN_COLORS.lens, GUN_LUM.lens, 12));
+      m.transparent = true;
+      m.opacity = 0.3;
+      m.blending = THREE.AdditiveBlending;
+      m.depthWrite = false;
+      this.lens = m;
+    }
+    return this.lens;
   }
 
   private glowMat(color: number, intensity: number): THREE.Material {
@@ -570,20 +508,16 @@ export class Viewmodel {
       this.hasModel = false;
       return;
     }
-    const group = new THREE.Group();
-    const parts = new Parts(group, this.geoms);
     const element = def.element;
     // rarity seam; the element tints the seam and the muzzle; common reads as a dim BONE strip
     const seam = element !== 'none' ? ELEMENT_COLORS[element] : def.rarity === 'common' ? PALETTE.BONE : RARITY_COLORS[def.rarity];
-    const mats: GunMats = {
-      body: this.toonMat(STEEL),
-      dark: this.toonMat(DARK),
-      accent: this.glowMat(seam, def.rarity === 'common' && element === 'none' ? glowLum(seam, 0.45, 12) : glowLum(seam, 1.2, 12)),
-    };
-    const builder = BUILDERS[def.archetype] ?? BUILDERS.rifle;
-    const muzzle = builder(parts, mats);
+    const accent = this.glowMat(seam, def.rarity === 'common' && element === 'none' ? glowLum(seam, 0.45, 12) : glowLum(seam, 1.2, 12));
+    const mats = gunSlotMaterials((c) => this.gunMat(c), (c, lum) => this.glowMat(c, glowLum(c, lum, 12)), accent, this.lensMat());
+    // shared cached geometry (src/player/weaponModels.ts): nothing to dispose per swap
+    const bp = gunBlueprint(def.archetype);
+    const group = instantiateGun(bp, mats);
     // gear §6a: barrel/mag/optic grow with item level, fins + brake stages at high levels
-    const grownMuzzle = applyWeaponGrowth(group, def, { dark: mats.dark, body: mats.body, seam: def.rarity === 'common' ? null : mats.accent }, muzzle);
+    const grownMuzzle = applyWeaponGrowth(group, def, { dark: mats.plate, body: mats.metal, seam: def.rarity === 'common' ? null : accent }, bp.muzzle);
     this.model = group;
     this.pivot.add(group);
     this.flashGroup.position.copy(grownMuzzle);
@@ -599,8 +533,6 @@ export class Viewmodel {
       this.model.removeFromParent();
       this.model = null;
     }
-    for (const g of this.geoms) g.dispose();
-    this.geoms = [];
   }
 
   // ---- triggers -------------------------------------------------------------
@@ -903,18 +835,20 @@ export class Viewmodel {
     // sights pose (not for scopes: those drop away and the HUD draws the scope)
     const sights = scoped ? 0 : aimVis;
     this.scopedDown = scoped && aim > 0.5;
-    const sightY = SIGHT_Y[this.current?.archetype ?? 'rifle'] ?? SIGHT_Y.rifle;
+    const arch = this.current?.archetype ?? 'rifle';
+    const sightY = SIGHT_Y[arch] ?? SIGHT_Y.rifle;
+    const adsPull = ADS_PULL[arch] ?? ADS_PULL.rifle;
 
     const ap = this.animPos;
     const ar = this.animRot;
     this.pivot.position.set(
       this.swayX + bx - bash * 0.1 - this.sprintT * 0.03 + sights * ADS_X + ap.x,
       this.swayY + by - lower * 0.45 - this.sprintT * 0.05 + this.airT * 0.015 * steady + sights * (ADS_Y - sightY) + ap.y,
-      this.kickZ * steady - bash * 0.32 + sights * ADS_PULL + ap.z,
+      this.kickZ * steady - bash * 0.32 + sights * adsPull + ap.z,
     );
     this.pivot.rotation.set(
       this.kickRot - lower * 0.9 - this.sprintT * 0.25 + this.airT * 0.04 + ar.x,
-      this.swayX * 2.5 + this.sprintT * 0.55 + bash * 0.45 + ar.y,
+      this.swayX * 2.5 + this.sprintT * 0.55 + bash * 0.45 + ar.y + HIP_YAW * (1 - sights),
       -this.swayX * 1.5 + bash * 0.9 + this.kickRoll + ar.z,
     );
 

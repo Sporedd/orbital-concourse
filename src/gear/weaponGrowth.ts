@@ -1,12 +1,12 @@
 /**
  * Weapon viewmodel growth (PLAN §11 "Weapons too", ART_DIRECTION §8 "Viewmodel guns"): item
  * level lengthens and thickens the barrel shroud, grows the magazine and the optic, adds
- * heat-sink fins and a stacked muzzle brake, all rectilinear. Same growth curve as gear
+ * chamfered heat-sink fins and a stacked muzzle brake (seam-edged, not seam-coloured). Same growth curve as gear
  * (weaponGrowth = growthForLevel(level + rarity bonus)). A level-20 legendary (item level 25,
  * growth ~0.93) gets a x1.56 barrel, x1.74 mag, 5 fins, a 4-stage brake and a mag extension.
  *
  * Works on a built viewmodel gun whose meshes are tagged with `mesh.userData.vmRole`
- * (tags to add in src/player/viewmodel.ts: INTEGRATION.md §6):
+ * (the gun models in src/player/weaponModels.ts tag their nodes):
  *   'barrel'  Z-axis cylinder (gun points -Z). Grows forward from its rear end. Barrels in
  *             series (shroud -> tip) are chained: a barrel starting where another ends is
  *             pushed forward by that one's growth. Parallel barrels (shotgun) grow together.
@@ -58,12 +58,30 @@ function localSize(mesh: THREE.Mesh): THREE.Vector3 {
   return geom.boundingBox!.getSize(new THREE.Vector3());
 }
 
+/** A thin seam strip along the top of a (non-uniformly scaled) part, as its child. */
+function seamStrip(box: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Vector3, h: number): THREE.Mesh {
+  const m = new THREE.Mesh(box, mat);
+  m.userData.vmRole = 'growth';
+  m.scale.set(1 + 0.002 / parent.x, h / parent.y, 1.03);
+  m.position.y = 0.5 + h / parent.y / 2 - 0.0005 / parent.y;
+  return m;
+}
+
+/** A thin seam band around the middle of a (non-uniformly scaled) part, as its child. */
+function seamBand(box: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Vector3): THREE.Mesh {
+  const m = new THREE.Mesh(box, mat);
+  m.userData.vmRole = 'growth';
+  m.scale.set(1 + 0.003 / parent.x, 1 + 0.003 / parent.y, 0.004 / parent.z);
+  return m;
+}
+
 interface BarrelInfo { mesh: THREE.Mesh; len: number; r: number; rear: number; front: number; shift: number }
 
 /**
  * Grow a built gun in place. `muzzle` is the builder's muzzle position (gun-group space);
- * returns the new muzzle position. `mats.seam` (rarity seam glow) edges the last fin and the
- * front brake stage; pass null for commons.
+ * returns the new muzzle position. `mats.seam` (rarity seam glow) edges the last fin and bands
+ * the front brake stage (child meshes, so the gun's child count is fins + stages + extension);
+ * pass null for commons.
  */
 export function applyWeaponGrowth(
   gun: THREE.Group, w: WeaponDef, mats: { dark: THREE.Material; body?: THREE.Material; seam?: THREE.Material | null },
@@ -165,24 +183,27 @@ export function applyWeaponGrowth(
   }
 
   // ---- added parts -----------------------------------------------------------
-  // heat-sink fins on top of the front barrel(s), the last one seam-edged
+  // heat-sink fins on top of the front barrel(s): chamfered plates, the last one seam-edged
+  // (a thin glowing strip along its top, not a glowing block)
   for (let i = 0; i < p.fins; i++) {
     const h = p.finHeight * (1 - 0.12 * i);
-    const fin = new THREE.Mesh(geo.box, i === p.fins - 1 && mats.seam ? mats.seam : mats.dark);
+    const fin = new THREE.Mesh(geo.chamfer, mats.dark);
     fin.userData.vmRole = 'growth';
     fin.scale.set(0.008 + frontSpan * 0.5, h, 0.035);
     fin.position.set(frontX, frontY + frontR + h / 2, frontTip + 0.03 + 0.05 * i);
     gun.add(fin);
+    if (i === p.fins - 1 && mats.seam) fin.add(seamStrip(geo.box, mats.seam, fin.scale, 0.003));
   }
   // muzzle brake: stacked rectangular stages past the tip, the front one seam-edged
   const stage = 0.026;
   for (let i = 0; i < p.brakeStages; i++) {
-    const s = new THREE.Mesh(geo.chamfer, i === p.brakeStages - 1 && mats.seam ? mats.seam : mats.dark);
+    const s = new THREE.Mesh(geo.chamfer, mats.dark);
     s.userData.vmRole = 'growth';
     const k = 1 + 0.12 * i;
     s.scale.set((frontR * 3 + frontSpan) * k, frontR * 2.6 * k, stage);
     s.position.set(frontX, frontY, frontTip - stage / 2 - i * (stage + 0.008));
     gun.add(s);
+    if (i === p.brakeStages - 1 && mats.seam) s.add(seamBand(geo.box, mats.seam, s.scale));
   }
   if (p.brakeStages) out.z -= p.brakeStages * (stage + 0.008);
   gun.traverse((o) => {

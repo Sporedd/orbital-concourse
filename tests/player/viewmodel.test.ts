@@ -6,6 +6,7 @@ import { generateWeapon } from '@/loot/weapons';
 import { Controller } from '@/player/controller';
 import { Viewmodel } from '@/player/viewmodel';
 import { THROW_RELEASE, THROW_TIME, reloadClip, sample, shotgunShellCount } from '@/player/animations';
+import { GUN_SIGHT_Y, gunBlueprint } from '@/player/weaponModels';
 import { createFakeContext, type TestContext } from '../helpers/fakeContext';
 
 const DT = 1 / 60;
@@ -305,5 +306,45 @@ describe('viewmodel grenade throw', () => {
     expect(vm.reloading || vm.throwing).toBe(false);
     expectRest(mag, rest);
     expect(pivot().position.distanceTo(pivotRest.pos)).toBeLessThan(1e-6);
+  });
+});
+
+describe('viewmodel gun models', () => {
+  it.each(ARCHETYPES)('%s: within budget (meshes, draw groups, triangles) with a lamp and a seam', (archetype) => {
+    const bp = gunBlueprint(archetype);
+    expect(bp.nodes.length).toBeLessThanOrEqual(12);
+    const groups = bp.nodes.reduce((s, n) => s + n.slots.length, 0);
+    expect(groups).toBeLessThanOrEqual(40);
+    expect(bp.triangles).toBeLessThanOrEqual(6000);
+    const slots = new Set(bp.nodes.flatMap((n) => n.slots));
+    expect(slots.has('lamp')).toBe(true);
+    expect(slots.has('accent')).toBe(true);
+    expect(slots.has('screen')).toBe(archetype === 'rifle' || archetype === 'sniper');
+    const lo = gunBlueprint(archetype, 'lo');
+    expect(lo.nodes.length).toBe(1);
+    expect(lo.triangles).toBeLessThan(bp.triangles);
+  });
+
+  it.each(ARCHETYPES)('%s: aiming down sights puts the sight line on the screen centre', (archetype) => {
+    if (archetype === 'sniper') return; // scoped: the gun lowers and the HUD draws the scope
+    equip(gun(archetype));
+    ctl.aimBlend = 1;
+    ctl.aimZoom = 1.2;
+    step(0.3);
+    const model = pivot().children.find((o) => o.name.startsWith('gun:'))!;
+    const p = model.localToWorld(new THREE.Vector3(0, GUN_SIGHT_Y[archetype], -0.1));
+    const local = ctx.camera.worldToLocal(p);
+    expect(Math.abs(local.x)).toBeLessThan(1e-3);
+    expect(Math.abs(local.y)).toBeLessThan(1e-3);
+    expect(local.z).toBeLessThan(-0.1);
+  });
+
+  it('keeps the growth tags: chained barrels, a scope, mags with end parts', () => {
+    const roles = (a: WeaponArchetype) => gunBlueprint(a).nodes.map((n) => n.userData.vmRole ?? n.userData.vmAnim);
+    expect(roles('smg').filter((r) => r === 'barrel').length).toBe(2);
+    expect(roles('rifle')).toEqual(expect.arrayContaining(['barrel', 'scope', 'mag', 'magEnd', 'handle']));
+    expect(roles('sniper')).toEqual(expect.arrayContaining(['barrel', 'scope', 'mag', 'magEnd', 'bolt']));
+    expect(roles('shotgun')).toEqual(expect.arrayContaining(['barrel', 'muzzle', 'pump']));
+    expect(roles('pistol')).toEqual(expect.arrayContaining(['slide', 'mag', 'magPart', 'barrel']));
   });
 });
