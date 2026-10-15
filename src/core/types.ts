@@ -431,7 +431,7 @@ export interface AudioSystem {
 // ---------------------------------------------------------------------------
 // UI
 // ---------------------------------------------------------------------------
-export type Screen = 'none' | 'start' | 'pause' | 'skills' | 'inventory' | 'gameover' | 'shop';
+export type Screen = 'none' | 'start' | 'pause' | 'skills' | 'inventory' | 'gameover' | 'shop' | 'help';
 
 export interface Hud {
   readonly screen: Screen;

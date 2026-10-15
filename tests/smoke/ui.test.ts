@@ -2,8 +2,11 @@
 /**
  * UI smoke test (src/ui): screen flow with the meta systems wired like main.ts — start menu rows
  * for optional systems, key I inventory screen (pauses + captures input), settings persistence +
- * the sensitivity setting read by the controller, and the game-over recap (damage dealt, kills, standing).
+ * the sensitivity setting read by the controller, the game-over recap (damage dealt, kills, standing),
+ * and the HELP screen (open/close from start, pause, play and overlays; every topic renders).
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { CAMERA } from '@/core/config';
@@ -25,6 +28,8 @@ import { createRoundManager } from '@/rounds';
 import { createHud } from '@/ui';
 import { SETTINGS_KEY, getSettings, reloadSettings, setSetting } from '@/ui/settings';
 import { vitalText } from '@/ui/hud';
+import { HELP_SEEN_KEY } from '@/ui/help';
+import { HELP_TOPICS, renderHelpMarkdown } from '@/ui/helpContent';
 import { Controller, MOUSE_SENSITIVITY } from '@/player/controller';
 import { createAudio } from '@/audio';
 import { createFakeFx, createFakeRenderer } from '../helpers/fakeContext';
@@ -92,7 +97,7 @@ describe('UI screens', () => {
   it('start menu hides rows for missing systems and shows them when wired', () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const bare = boot(false);
-    expect(visibleRows(bare.ctx.uiRoot, 0)).toEqual(['ENTER THE PIT', 'SKILL TREE', 'CLASS', 'SETTINGS', 'SOUND: OFF']);
+    expect(visibleRows(bare.ctx.uiRoot, 0)).toEqual(['ENTER THE PIT', 'SKILL TREE', 'CLASS', 'HELP', 'SETTINGS', 'SOUND: OFF']);
     const full = boot(true);
     const rows = visibleRows(full.ctx.uiRoot, 0);
     expect(rows).toContain('LOADOUT');
@@ -174,5 +179,155 @@ describe('UI screens', () => {
     expect(text).not.toMatch(/Damage dealt\s*0(?!\d)/i);
     expect(text).toMatch(/Standing earned\s*\+\d+/i);
     expect(text).toMatch(/Best weapon/i);
+  });
+});
+
+const rowByLabel = (root: HTMLElement, screenIdx: number, label: string) =>
+  Array.from(root.querySelectorAll('.sb-screen')[screenIdx].querySelectorAll<HTMLButtonElement>('.sb-menu button'))
+    .find((b) => b.querySelector('.v')!.textContent === label)!;
+const helpEl = (root: HTMLElement) => root.querySelector('.sb-help') as HTMLElement;
+const helpTitle = (root: HTMLElement) => root.querySelector('.sbh-pt')!.textContent;
+
+describe('help screen', () => {
+  it('opens from the start menu row and H, and closes back to start with Esc or H', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { ctx, key } = boot(true);
+    expect(ctx.hud.screen).toBe('start');
+    expect(helpEl(ctx.uiRoot).classList.contains('sb-hidden')).toBe(true);
+    rowByLabel(ctx.uiRoot, 0, 'HELP').click();
+    expect(ctx.hud.screen).toBe('help');
+    expect(helpEl(ctx.uiRoot).classList.contains('sb-hidden')).toBe(false);
+    expect(ctx.input.uiCaptured).toBe(true);
+    key('Escape');
+    expect(ctx.hud.screen).toBe('start');
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('help');
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('start');
+  });
+
+  it('opens from pause (row and H) and returns to pause', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { ctx, frame, key } = boot(true);
+    ctx.rounds.start();
+    ctx.hud.showScreen('pause');
+    frame(0.05);
+    rowByLabel(ctx.uiRoot, 1, 'HELP').click();
+    expect(ctx.hud.screen).toBe('help');
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('pause');
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('help');
+    key('Escape');
+    expect(ctx.hud.screen).toBe('pause');
+  });
+
+  it('H during play pauses into help and H returns to play', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { ctx, frame, key } = boot(true);
+    ctx.rounds.start();
+    ctx.input.lock();
+    ctx.hud.showScreen('none');
+    frame(0.05);
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('help');
+    expect(ctx.input.uiCaptured).toBe(true);
+    const t = ctx.rounds.state.phaseTime;
+    for (let i = 0; i < 5; i++) frame(0.1);
+    expect(ctx.rounds.state.phaseTime).toBe(t);
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('none');
+    expect(ctx.input.uiCaptured).toBe(false);
+  });
+
+  it('stacks on the skill tree and returns to it; ignores H while typing', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { ctx, frame, key } = boot(true);
+    ctx.rounds.start();
+    ctx.input.lock();
+    ctx.hud.showScreen('none');
+    frame(0.05);
+    key('Tab');
+    expect(ctx.hud.screen).toBe('skills');
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('help');
+    key('Escape');
+    expect(ctx.hud.screen).toBe('skills');
+    key('Tab');
+    expect(ctx.hud.screen).toBe('none');
+
+    ctx.hud.showScreen('start');
+    const field = document.createElement('input');
+    ctx.uiRoot.appendChild(field);
+    field.focus();
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('start');
+    field.blur();
+  });
+
+  it('every topic renders, and arrows / number keys / two-digit jumps pick topics', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { ctx, frame, key } = boot(true);
+    key('KeyH');
+    expect(ctx.hud.screen).toBe('help');
+    const rows = ctx.uiRoot.querySelectorAll<HTMLButtonElement>('.sbh-list button');
+    expect(rows.length).toBe(HELP_TOPICS.length);
+    expect(HELP_TOPICS.length).toBeGreaterThanOrEqual(13);
+    HELP_TOPICS.forEach((t, i) => {
+      expect(() => rows[i].click()).not.toThrow();
+      expect(helpTitle(ctx.uiRoot)).toBe(t.title);
+      const content = ctx.uiRoot.querySelector('.sbh-content') as HTMLElement;
+      expect(content.textContent!.length).toBeGreaterThan(100);
+      expect(content.textContent).not.toMatch(/\*\*/); // bold markers were rendered
+      expect(rows[i].classList.contains('sel')).toBe(true);
+    });
+    // keycaps render as elements, not bracket text
+    rows[HELP_TOPICS.findIndex((t) => t.id === 'loop')].click();
+    expect(ctx.uiRoot.querySelectorAll('.sbh-content .sbh-k, .sbh-content .sb-key').length).toBeGreaterThan(0);
+
+    key('Home');
+    expect(helpTitle(ctx.uiRoot)).toBe(HELP_TOPICS[0].title);
+    key('ArrowDown');
+    expect(helpTitle(ctx.uiRoot)).toBe(HELP_TOPICS[1].title);
+    key('ArrowUp');
+    key('ArrowUp'); // wraps
+    expect(helpTitle(ctx.uiRoot)).toBe(HELP_TOPICS[HELP_TOPICS.length - 1].title);
+    for (let i = 0; i < 20; i++) frame(0.05);
+    key('Digit3');
+    expect(helpTitle(ctx.uiRoot)).toBe(HELP_TOPICS[2].title);
+    for (let i = 0; i < 20; i++) frame(0.05);
+    key('Digit1');
+    key('Digit2');
+    expect(helpTitle(ctx.uiRoot)).toBe(HELP_TOPICS[11].title);
+    for (let i = 0; i < 20; i++) frame(0.05);
+    key('Digit2');
+    expect(helpTitle(ctx.uiRoot)).toBe(HELP_TOPICS[1].title);
+    // the topic survives closing and reopening
+    key('Escape');
+    key('KeyH');
+    expect(helpTitle(ctx.uiRoot)).toBe(HELP_TOPICS[1].title);
+  });
+
+  it('shows the first-run hint on the start screen until help has been opened', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    localStorage.removeItem(HELP_SEEN_KEY);
+    const first = boot(true);
+    const hint = first.ctx.uiRoot.querySelector('.sb-helphint') as HTMLElement;
+    expect(hint.classList.contains('sb-hidden')).toBe(false);
+    expect(hint.textContent).toMatch(/PRESS H/);
+    hint.click();
+    expect(first.ctx.hud.screen).toBe('help');
+    expect(localStorage.getItem(HELP_SEEN_KEY)).toBe('1');
+    first.key('Escape');
+    expect(first.ctx.hud.screen).toBe('start');
+    expect(hint.classList.contains('sb-hidden')).toBe(true);
+    const again = boot(true);
+    expect((again.ctx.uiRoot.querySelector('.sb-helphint') as HTMLElement).classList.contains('sb-hidden')).toBe(true);
+  });
+
+  it('docs/HELP.md is generated from the same data (npx tsx scripts/help-md.ts)', () => {
+    const md = readFileSync(resolve(process.cwd(), 'docs/HELP.md'), 'utf8').replace(/\r\n/g, '\n');
+    expect(md).toBe(renderHelpMarkdown());
+    for (const t of HELP_TOPICS) expect(md).toContain(`· ${t.title}`);
   });
 });

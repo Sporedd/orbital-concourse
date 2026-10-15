@@ -299,7 +299,7 @@ export function createRoundManager(ctx: GameContext): RoundManager {
     // Freeze the round clock while a menu is open (single-player only: in a co-op session the
     // host's menus must not stop the shared simulation).
     const screen = ctx.hud ? ctx.hud.screen : 'none';
-    if ((screen === 'pause' || screen === 'skills' || screen === 'inventory' || screen === 'shop') && !inSession()) return;
+    if ((screen === 'pause' || screen === 'skills' || screen === 'inventory' || screen === 'shop' || screen === 'help') && !inSession()) return;
 
     state.phaseTime += dt;
     switch (state.phase) {

@@ -5,6 +5,7 @@
  *    standing badge when ctx.standing exists), CLICK TO ENTER
  *  - pause: hazard-tab band + menu + settings (mouse sensitivity, sound)
  *  - skill tree: floor plan of plinths + class picker (./skillTree.ts, docs/SKILL_TREE.md)
+ *  - help: the field manual (./help.ts, content in ./helpContent.ts); start + pause rows, key H
  *  - game over: THREAT ribbon + manifest recap (round, kills, damage, time, best weapon,
  *    standing earned, rank) + standing badge
  * Optional systems (ctx.standing, ctx.gear, ctx.net) are looked up when a screen is shown, so
@@ -19,6 +20,7 @@ import { createSponsorPicker, createStandingBadge, type SponsorPickerWidget, typ
 import { esc, h, rarityCss } from './dom';
 import { currentLeague } from './hud';
 import { fmtInt, fmtTime, type RunStats } from './runStats';
+import { createHelpScreen, helpSeen, markHelpSeen, type HelpScreen } from './help';
 import { createSkillTree } from './skillTree';
 import { SENSITIVITY_RANGE, getSettings, onSettingsChange, setSetting } from './settings';
 
@@ -36,6 +38,9 @@ export interface ScreenCallbacks {
   onOpenShop?(): void;
   /** Pit stop → next round (pause menu row while the round sits cleared). */
   onContinue?(): void;
+  /** HELP screen (start + pause rows, the first-run hint). */
+  onOpenHelp?(): void;
+  onCloseHelp?(): void;
 }
 
 export interface Screens {
@@ -45,14 +50,16 @@ export interface Screens {
   setGameOver(round: number, kills: number): void;
   /** Refresh the SOUND ON/OFF rows from ctx.audio.muted (cheap; call every frame). */
   syncSound(): void;
+  /** The help screen (keyboard navigation is fed by src/ui/index.ts). */
+  readonly help: HelpScreen;
 }
 
 export const GAME_TITLE = 'Orbital Concourse';
 
 const CONTROLS: [string, string][] = [
-  ['WASD', 'Move'], ['SHIFT', 'Sprint'], ['SPACE', 'Jump'], ['LMB', 'Fire'],
+  ['WASD', 'Move'], ['SHIFT', 'Sprint'], ['SPACE', 'Jump'], ['LMB', 'Fire'], ['RMB', 'Aim'],
   ['R', 'Reload'], ['1 2', 'Swap weapon'], ['E', 'Take / swap'], ['V', 'Melee'],
-  ['G', 'Grenade'], ['Q', 'Active'], ['TAB', 'Skill tree'], ['ESC', 'Pause'], ['M', 'Mute'],
+  ['G', 'Grenade'], ['Q', 'Active'], ['TAB', 'Skill tree'], ['ESC', 'Pause'], ['M', 'Mute'], ['H', 'Help'],
 ];
 
 const pad2 = (n: number) => String(Math.max(0, Math.floor(n))).padStart(2, '0');
@@ -219,8 +226,14 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
   const sponsorRow = panelRow('SPONSOR', 'sponsor', () => !!ctx.standing);
   startRows.push(sponsorRow);
   startRows.push({ el: row(menu, 'CO-OP', '[F2]', openCoop), when: () => !!ctx.net });
+  const helpRow = row(menu, 'HELP', '[H]', () => cb.onOpenHelp?.());
+  startRows.push({ el: helpRow, when: () => !!cb.onOpenHelp });
   startRows.push(panelRow('SETTINGS', 'settings'));
   startRows.push({ el: soundRow(menu) });
+  // first-run callout beside the HELP row (localStorage 'concourse.help.seen'); clicks reach the
+  // row (opens help). Gone once help has been opened.
+  const helpHint = h('span', 'sb-helphint sb-hidden', helpRow);
+  helpHint.innerHTML = '<span class="sb-key">H</span>NEW HERE? PRESS H FOR HELP';
 
   const sideWrap = h('div', 'side', st);
   stop(sideWrap);
@@ -304,6 +317,7 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
     { el: row(pmenu, 'SKILL TREE', '[TAB]', () => cb.onOpenSkills?.()) },
     { el: row(pmenu, 'LOADOUT', '[I]', () => cb.onOpenInventory?.()), when: () => !!ctx.gear },
     { el: row(pmenu, 'CO-OP', '[F2]', openCoop), when: () => !!ctx.net },
+    { el: row(pmenu, 'HELP', '[H]', () => cb.onOpenHelp?.()), when: () => !!cb.onOpenHelp },
     { el: soundRow(pmenu) },
   ];
   buildSettings(prow);
@@ -347,7 +361,13 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
   let goKills = 0;
   let bestWeapon: WeaponDef | null = null;
 
-  const all: Partial<Record<Screen, HTMLElement>> = { start, pause, skills, gameover: over };
+  // ---- help (./help.ts) -------------------------------------------------------------------------
+  const help = createHelpScreen(root, {
+    onClose: () => cb.onCloseHelp?.(),
+    onSelect: () => ctx.audio.play('ui_click'),
+  });
+
+  const all: Partial<Record<Screen, HTMLElement>> = { start, pause, skills, gameover: over, help: help.el };
 
   function refreshPlaque(): void {
     const sys = ctx.standing;
@@ -439,6 +459,11 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
       refreshMenuLabels();
       for (const el of controlKeys) el.classList.toggle('sb-hidden', !(ctx as unknown as Record<string, unknown>)[el.dataset.sys!]);
       setSide(side === 'sponsor' && !ctx.standing ? 'controls' : side);
+      helpHint.classList.toggle('sb-hidden', helpSeen() || !cb.onOpenHelp);
+    }
+    if (screen === 'help') {
+      markHelpSeen();
+      helpHint.classList.add('sb-hidden');
     }
     if (screen === 'pause') renumber(pauseRows);
     if (screen === 'gameover') renumber(overRows);
@@ -468,5 +493,5 @@ export function createScreens(ctx: GameContext, root: HTMLElement, cb: ScreenCal
   }
 
   show('none');
-  return { show, renderSkills, refreshBest, setGameOver, syncSound };
+  return { show, renderSkills, refreshBest, setGameOver, syncSound, help };
 }

@@ -4,6 +4,7 @@
  *  start ─click→ none ⇄ pause (Esc / lock lost) ; none ⇄ skills (Tab) ; none ⇄ inventory (I, with ctx.gear)
  *  game:over → gameover ─click→ none (retry) / start (main menu)
  *  pit stop (phase 'cleared'): Enter = continue (host), B ⇄ shop; shop also from the start menu
+ *  any screen or play ⇄ help (H, menu rows); H / Esc return to the screen it was opened from
  * Every screen other than 'none' unlocks the pointer and sets input.uiCaptured (sim pauses).
  */
 import type { GameContext, Hud, Screen } from '@/core/types';
@@ -26,6 +27,8 @@ export function createHud(ctx: GameContext): Hud {
   let screen: Screen = 'start';
   /** Where Tab / I return to when the overlay screen closes. */
   let overlayReturn: Screen = 'none';
+  /** Where H / Esc return to when the help screen closes (help stacks on top of any screen). */
+  let helpReturn: Screen = 'none';
   let unlockedFor = 0;
   let gameOverIn = -1;
 
@@ -124,6 +127,8 @@ export function createHud(ctx: GameContext): Hud {
     onOpenInventory: () => openOverlay('inventory'),
     onOpenShop: () => openOverlay('shop'),
     onContinue: continueRun,
+    onOpenHelp: () => openHelp(),
+    onCloseHelp: () => closeHelp(),
   }, run);
 
   function showScreen(s: Screen): void {
@@ -136,10 +141,10 @@ export function createHud(ctx: GameContext): Hud {
     else inventory?.hide();
     if (s === 'shop') shop!.show();
     else shop?.hide();
-    widgets.setVisible(s !== 'start' && s !== 'gameover' && s !== 'inventory' && s !== 'shop');
+    widgets.setVisible(s !== 'start' && s !== 'gameover' && s !== 'inventory' && s !== 'shop' && s !== 'help');
     if (s !== 'none') {
       ctx.input.unlock();
-      if (s === 'skills' || s === 'pause' || s === 'inventory' || s === 'shop') ctx.audio.play('ui_open');
+      if (s === 'skills' || s === 'pause' || s === 'inventory' || s === 'shop' || s === 'help') ctx.audio.play('ui_open');
     }
     ctx.input.uiCaptured = s !== 'none';
     ctx.events.emit('ui:screen', { screen: s });
@@ -163,6 +168,31 @@ export function createHud(ctx: GameContext): Hud {
       showScreen(back);
     }
   }
+
+  /** Help opens on top of whatever is showing (play pauses into it) and returns there. */
+  function openHelp(): void {
+    if (screen === 'help') return;
+    helpReturn = screen;
+    showScreen('help');
+  }
+
+  function closeHelp(): void {
+    if (screen !== 'help') return;
+    const back = helpReturn;
+    helpReturn = 'none';
+    if (back === 'none') {
+      if (playing()) enterPlay();
+      else showScreen('start');
+    } else {
+      showScreen(back);
+    }
+  }
+
+  /** Typing in a text field (co-op lobby name / code) must not open help. */
+  const typing = () => {
+    const a = document.activeElement as HTMLElement | null;
+    return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
+  };
 
   // Losing pointer lock mid-game (browser eats Esc) → pause.
   document.addEventListener('pointerlockchange', () => {
@@ -192,7 +222,10 @@ export function createHud(ctx: GameContext): Hud {
       if (gameOverIn <= 0) {
         gameOverIn = -1;
         if (isOverlay(screen)) overlayReturn = 'gameover';
-        else showScreen('gameover');
+        else if (screen === 'help') {
+          if (isOverlay(helpReturn)) overlayReturn = 'gameover';
+          else helpReturn = 'gameover';
+        } else showScreen('gameover');
       }
     }
 
@@ -202,8 +235,14 @@ export function createHud(ctx: GameContext): Hud {
     const escKey = input.rawJustPressed('Escape');
     const shopKey = input.rawJustPressed('KeyB');
     const enterKey = input.rawJustPressed('Enter') || input.rawJustPressed('NumpadEnter');
+    const helpKey = input.rawJustPressed('KeyH') && !typing();
     const base = screen === 'none' || screen === 'pause' || screen === 'start' || screen === 'gameover';
-    if (screen === 'skills') {
+    if (screen === 'help') {
+      if (helpKey || escKey) closeHelp();
+      else screens.help.handleInput(input, dt);
+    } else if (helpKey && (screen !== 'none' || playing())) {
+      openHelp();
+    } else if (screen === 'skills') {
       if (tab || escKey) closeOverlay();
       else if (invKey && ctx.gear) showScreen('inventory');
       else if (shopKey && shopAllowed()) showScreen('shop');
