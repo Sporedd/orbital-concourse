@@ -14,7 +14,7 @@ import { ELEMENT_COLORS } from '@/core/types';
 import { LUM, PALETTE, glowLum } from '@/rendering/style';
 import type { EnemyEnv } from './common';
 import { hitPlayer, noRaycast, turnTowards } from './common';
-import type { Rig } from './models';
+import { updateGlowLod, type Rig } from './models';
 
 /** Serializable per-enemy sim state (EnemyState + the extra timers every enemy needs). */
 export interface EnemySimState extends EnemyState {
@@ -58,6 +58,7 @@ const _probeDir = new THREE.Vector3();
 const _probeOrigin = new THREE.Vector3();
 const _next = new THREE.Vector3();
 const _head = new THREE.Vector3();
+const _cam = new THREE.Vector3();
 // hit flash: emissive BONE at lum 1.2 for a few frames (art spec §7: not a white-out)
 const WHITE = new THREE.Color(PALETTE.BONE).multiplyScalar(glowLum(PALETTE.BONE, LUM.seam, 4));
 const FROZEN_TINT = new THREE.Color(0xbff4ff);
@@ -664,6 +665,8 @@ export abstract class BaseEnemy<S extends EnemySimState = EnemySimState> impleme
     }
     if (!s.alive) this.applyDeathPose();
     this.updateEmissive();
+    const cam = this.env.ctx.camera;
+    if (cam) updateGlowLod(this.rig, _cam.setFromMatrixPosition(cam.matrixWorld));
   }
 
   private applyDeathPose(): void {

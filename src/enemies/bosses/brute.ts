@@ -11,6 +11,7 @@ import type { EnemyEnv } from '../common';
 import { hurtPlayersInRadius, playerCapsuleDistance, shakeFrom } from '../common';
 import type { EnemyConfig, EnemySimState } from '../base';
 import { buildBrute } from '../models';
+import { poseRun, setElbows } from '../pose';
 import { BossBase } from './boss';
 import type { Vec3 } from '@/core/types';
 
@@ -247,16 +248,15 @@ export class Brute extends BossBase<BruteState> {
     const r = this.rig;
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     const amp = s.alive ? Math.min(1, speed / 3) : 0;
-    const sw = Math.sin(this.walkPhase) * 0.55 * amp;
-    r.legs[0].rotation.x = sw;
-    r.legs[1].rotation.x = -sw;
-    let lean = 0.1 + 0.1 * amp;
-    let armXL = -sw * 0.7;
-    let armXR = sw * 0.7;
+    let bob = poseRun(r, this.walkPhase, amp, { stride: 0.55, arms: 0.55, elbow: 0.6, bob: 0.1, twist: 0.08 });
+    let lean = 0.1 + 0.12 * amp;
+    let armXL = r.arms[0].rotation.x;
+    let armXR = r.arms[1].rotation.x;
+    let elL = r.parts.elbow0?.rotation.x ?? 0;
+    let elR = r.parts.elbow1?.rotation.x ?? 0;
     let armZ = 0.12;
     let headX = 0;
     let headZ = 0;
-    let bob = Math.abs(Math.sin(this.walkPhase)) * 0.12 * amp;
     const t = s.animTime;
     switch (s.anim) {
       case 'roar': {
@@ -264,24 +264,24 @@ export class Brute extends BossBase<BruteState> {
         lean = -0.3 * k;
         armZ = 0.12 + 1.1 * k;
         armXL = armXR = -0.6 * k;
+        elL = elR = -0.4 - 0.9 * k;
         headX = -0.45 * k + Math.sin(t * 40) * 0.04;
         bob = Math.abs(Math.sin(t * 9)) * 0.15; // stomping
         break;
       }
       case 'charge': {
         lean = 0.6;
-        armXL = armXR = 0.8;
         armZ = 0.3;
         headX = -0.4;
-        const run = Math.sin(s.age * 16);
-        r.legs[0].rotation.x = run * 0.9;
-        r.legs[1].rotation.x = -run * 0.9;
-        bob = Math.abs(run) * 0.2;
+        bob = poseRun(r, s.age * 16, 1, { stride: 0.9, arms: 0, bob: 0.2 });
+        armXL = armXR = 0.8;
+        elL = elR = -1.4;
         break;
       }
       case 'stunned': {
         lean = 0.45;
         armXL = armXR = 0.2;
+        elL = elR = -0.2;
         armZ = 0.05;
         headX = 0.4;
         headZ = Math.sin(t * 6) * 0.3;
@@ -293,12 +293,14 @@ export class Brute extends BossBase<BruteState> {
           const k = t / w;
           lean = -0.35 * k;
           armXL = armXR = -2.9 * k;
+          elL = elR = -0.4 - 0.5 * k;
           armZ = 0.12 - 0.05 * k;
         } else {
           const k = Math.min(1, (t - w) / 0.08);
           const settle = Math.max(0, 1 - (t - w - 0.25) / 0.4);
           lean = 0.55 * k * settle + 0.1;
           armXL = armXR = -2.9 + 3.3 * k;
+          elL = elR = -0.9 + 0.7 * k;
           if (settle < 1) armXL = armXR = 0.4 * settle;
         }
         break;
@@ -308,6 +310,7 @@ export class Brute extends BossBase<BruteState> {
     }
     if (!s.alive) {
       armXL = armXR = -0.6;
+      elL = elR = -0.5;
       armZ = 0.8;
     }
     lean -= (s.hitTimer / 0.18) * 0.12;
@@ -315,6 +318,7 @@ export class Brute extends BossBase<BruteState> {
     r.body.rotation.x = lean;
     r.arms[0].rotation.set(armXL, 0, -armZ);
     r.arms[1].rotation.set(armXR, 0, armZ);
+    setElbows(r, elL, elR);
     if (r.head) r.head.rotation.set(headX - lean * 0.5, 0, headZ);
   }
 }

@@ -11,6 +11,7 @@ import { noRaycast } from '../common';
 import type { EnemyConfig, EnemySimState } from '../base';
 import { BOSS_SCALE, buildSummoner, RING_GEO, SPHERE_GEO } from '../models';
 import { BossBase } from './boss';
+import { setElbows } from '../pose';
 
 export interface SummonerState extends EnemySimState {
   mode: 'drift' | 'summon';
@@ -221,13 +222,17 @@ export class Summoner extends BossBase<SummonerState> {
     let armX = -0.15 + Math.sin(s.age * 1.3) * 0.08;
     let armZ = 0.2;
     let armXR = armX;
+    let elL = -0.7;
+    let elR = -0.7;
     if (s.anim === 'summon') {
       const k = Math.min(1, t / 0.3);
       armX = armXR = -1.2 * k;
       armZ = 0.2 + 1.0 * k;
+      elL = elR = -0.7 + 0.5 * k;
     } else if (s.anim === 'cast') {
       const k = t < 0.15 ? t / 0.15 : Math.max(0, 1 - (t - 0.15) / 0.3);
       armXR = -1.5 * k;
+      elR = -0.7 + 0.7 * k;
     }
     if (!s.alive) {
       armX = armXR = 0.3;
@@ -235,13 +240,14 @@ export class Summoner extends BossBase<SummonerState> {
     }
     r.arms[0].rotation.set(armX, 0, -armZ);
     r.arms[1].rotation.set(armXR, 0, armZ);
+    setElbows(r, elL, elR);
     if (r.head) r.head.rotation.x = Math.sin(s.age * 0.9) * 0.08;
 
     // non-hittable extras live in world space
     const shielded = s.alive && s.shield > 0;
     this.bubble.visible = shielded;
     if (shielded) {
-      this.bubble.position.set(this.position.x, this.position.y + r.body.position.y * BOSS_SCALE.summoner + 1.7, this.position.z);
+      this.bubble.position.set(this.position.x, this.position.y + r.body.position.y * BOSS_SCALE.summoner + 0.2, this.position.z);
       const flick = s.shield < 1 ? (Math.sin(s.age * 30) > 0 ? 1 : 0.4) : 1;
       this.bubble.scale.setScalar(2.9 + 0.1 * Math.sin(s.age * 8));
       this.bubbleMat.opacity = 0.26 * flick;

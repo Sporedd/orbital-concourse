@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import type { EnemyEnv } from '../common';
 import { BaseEnemy, type EnemyConfig, type EnemySimState } from '../base';
 import { buildSpitter } from '../models';
+import { poseRun } from '../pose';
 
 export interface SpitterState extends EnemySimState {
   mode: 'move' | 'charge';
@@ -118,34 +119,29 @@ export class Spitter extends BaseEnemy<SpitterState> {
     const r = this.rig;
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     const amp = s.alive ? Math.min(1, speed / 3) : 0;
-    const a = Math.sin(this.walkPhase) * 0.45 * amp;
-    // diagonal pairs 0/3 and 1/2
-    r.legs[0].rotation.x = a;
-    r.legs[3].rotation.x = a;
-    r.legs[1].rotation.x = -a;
-    r.legs[2].rotation.x = -a;
-    r.body.position.y = r.bodyBaseY + Math.abs(Math.cos(this.walkPhase)) * 0.06 * amp + Math.sin(s.age * 2.5) * 0.02;
+    let bob = poseRun(r, this.walkPhase, amp, { stride: 0.7, arms: 0.7, bob: 0.045 });
+    bob += Math.sin(s.age * 2.5) * 0.01;
 
+    // charge: brace (lean back, tank swells); fire: the launcher kicks the shoulders back
     let swell = 0;
-    let neck = 0;
+    let brace = 0;
     if (s.anim === 'attack') {
       const t = s.animTime;
       if (t < CHARGE) {
         swell = t / CHARGE;
-        neck = -0.45 * swell;
+        brace = 0.2 * swell;
       } else {
-        const k = Math.max(0, 1 - (t - CHARGE) / 0.25);
-        swell = 0;
-        neck = 0.35 * k;
+        brace = -0.25 * Math.max(0, 1 - (t - CHARGE) / 0.25);
       }
     }
     const sacS = 1 + 0.07 * Math.sin(s.age * 5) + 0.35 * swell;
     r.parts.sac.scale.setScalar(sacS);
-    r.parts.neck.rotation.x = 0.6 + neck;
-    if (r.head) {
-      r.head.position.set(0, 0.66 + neck * 0.1, 0.85 + neck * 0.35);
-      r.head.rotation.x = -neck * 0.5;
-    }
-    r.body.rotation.x = -(s.hitTimer / 0.18) * 0.35 + (s.alive ? 0 : 0.3);
+    const lean = 0.06 + 0.24 * amp - brace - (s.hitTimer / 0.18) * 0.35 + (s.alive ? 0 : 0.3);
+    r.body.position.y = r.bodyBaseY + bob;
+    r.body.rotation.x = lean;
+    r.arms[0].rotation.z = -0.1 - 0.1 * amp;
+    r.arms[1].rotation.z = 0.1 + 0.1 * amp;
+    r.body.rotation.z = Math.sin(this.walkPhase) * 0.05 * amp;
+    if (r.head) r.head.rotation.x = -lean * 0.5;
   }
 }

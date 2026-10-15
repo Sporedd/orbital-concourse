@@ -8,6 +8,7 @@ import type { EnemyEnv } from '../common';
 import { hurtPlayersInRadius, shakeFrom } from '../common';
 import { BaseEnemy, type EnemyConfig, type EnemySimState } from '../base';
 import { buildBomber } from '../models';
+import { poseRun, setElbows } from '../pose';
 
 export interface BomberState extends EnemySimState {
   fusing: boolean;
@@ -38,7 +39,7 @@ export class Bomber extends BaseEnemy<BomberState> {
     super(env, CFG, buildBomber(env.ctx.materials), pos, tier, {
       fusing: false, fuse: FUSE, exploded: false, popTimer: -1, popKiller: null, zig: env.ctx.rng() * 10,
     });
-    this.stride = 2.6;
+    this.stride = 2.0;
   }
 
   protected think(dt: number): void {
@@ -146,22 +147,25 @@ export class Bomber extends BaseEnemy<BomberState> {
     const r = this.rig;
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     const amp = s.alive ? Math.min(1, speed / 5) : 0;
-    const sw = Math.sin(this.walkPhase);
-    r.legs[0].rotation.x = sw * 0.7 * amp;
-    r.legs[1].rotation.x = -sw * 0.7 * amp;
-    r.arms[0].rotation.z = -0.4 - Math.abs(sw) * 0.5 * amp;
-    r.arms[1].rotation.z = 0.4 + Math.abs(sw) * 0.5 * amp;
-    r.body.rotation.z = sw * 0.18 * amp;
-    r.body.position.y = r.bodyBaseY + Math.abs(Math.cos(this.walkPhase)) * 0.1 * amp;
+    // hunched sprint, short pumping arms (elbows tight to the payload)
+    const bob = poseRun(r, this.walkPhase, amp, { stride: 0.95, arms: 0.55, elbow: 1.35, bob: 0.04, twist: 0.08 });
+    r.body.position.y = r.bodyBaseY + bob;
+    r.body.rotation.z = 0;
+    r.arms[0].rotation.z = -0.25;
+    r.arms[1].rotation.z = 0.25;
     let bombS = 1;
     if (s.fusing && s.alive) {
       const prog = 1 - Math.max(0, s.fuse) / FUSE;
       bombS = 1 + 0.35 * prog + 0.05 * Math.sin(s.age * 50);
-      r.body.rotation.z += Math.sin(s.age * 60) * 0.06;
-      r.body.rotation.x = 0.1 * Math.sin(s.age * 47);
+      r.body.rotation.z = Math.sin(s.age * 60) * 0.06;
+      r.body.rotation.x = 0.15 + 0.1 * Math.sin(s.age * 47);
+      // clutching the payload
+      r.arms[0].rotation.x = r.arms[1].rotation.x = -0.5;
+      setElbows(r, -1.7, -1.7);
     } else {
-      r.body.rotation.x = 0.2 * amp - (s.hitTimer / 0.18) * 0.35;
+      r.body.rotation.x = 0.15 + 0.35 * amp - (s.hitTimer / 0.18) * 0.35;
     }
+    if (r.head) r.head.rotation.x = -r.body.rotation.x * 0.7;
     r.parts.bomb.scale.setScalar(bombS);
     r.parts.spark.scale.setScalar(0.8 + 0.5 * Math.abs(Math.sin(s.age * 25)));
   }

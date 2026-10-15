@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import type { EnemyEnv } from '../common';
 import { BaseEnemy, type EnemyConfig, type EnemySimState } from '../base';
 import { buildGrunt } from '../models';
+import { poseRun, setElbows } from '../pose';
 
 export interface GruntState extends EnemySimState {
   mode: 'chase' | 'windup' | 'recover';
@@ -31,6 +32,7 @@ export class Grunt extends BaseEnemy<GruntState> {
     super(env, CFG, buildGrunt(env.ctx.materials), pos, tier, {
       mode: 'chase', timer: 0, cooldown: 0.4, zig: env.ctx.rng() * 10,
     });
+    this.stride = 2.0;
   }
 
   protected think(dt: number): void {
@@ -104,38 +106,44 @@ export class Grunt extends BaseEnemy<GruntState> {
     const r = this.rig;
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     const amp = s.alive ? Math.min(1, speed / 4) : 0;
-    const sw = Math.sin(this.walkPhase) * 0.8 * amp;
-    r.legs[0].rotation.x = sw;
-    r.legs[1].rotation.x = -sw;
-    let lean = 0.15 + 0.25 * amp;
-    let armL = -sw * 0.9;
-    let armR = sw * 0.9;
-    let bob = Math.abs(Math.sin(this.walkPhase)) * 0.07 * amp;
-    if (s.anim === 'idle') bob += Math.sin(s.age * 2.2) * 0.02;
+    // forward-leaning sprint: long stride, full arm swing, knees and elbows folding
+    let bob = poseRun(r, this.walkPhase, amp, { stride: 0.85, arms: 0.95, bob: 0.06 });
+    let lean = 0.08 + 0.34 * amp;
+    let arms: number | null = null;
+    let elbows = -0.4;
+    if (s.anim === 'idle') bob += Math.sin(s.age * 2.2) * 0.012;
     if (s.anim === 'attack') {
       const t = s.animTime;
       if (t < WINDUP) {
         const k = t / WINDUP;
         lean = -0.4 * k;
-        armL = armR = -2.8 * k;
+        arms = -2.8 * k;
+        elbows = -0.4 - 0.9 * k;
       } else {
         const k = Math.min(1, (t - WINDUP) / 0.1);
         const settle = Math.max(0, 1 - (t - WINDUP - 0.1) / 0.3);
         lean = 0.6 * k * settle + 0.2 * (1 - settle);
-        armL = armR = -2.8 + 2.4 * k;
+        arms = -2.8 + 2.4 * k;
+        elbows = -1.3 + 1.0 * k;
       }
     }
     if (!s.alive) {
-      armL = armR = -1.2;
+      arms = -1.2;
+      elbows = -0.5;
       lean = -0.2;
     }
     lean -= (s.hitTimer / 0.18) * 0.4;
     r.body.position.y = r.bodyBaseY + bob;
     r.body.rotation.x = lean;
-    r.arms[0].rotation.x = armL;
-    r.arms[1].rotation.x = armR;
-    r.arms[0].rotation.z = -0.15;
-    r.arms[1].rotation.z = 0.15;
+    if (arms !== null) {
+      r.arms[0].rotation.x = arms;
+      r.arms[1].rotation.x = arms;
+      setElbows(r, elbows, elbows);
+    }
+    // elbows out a little and a weight shift, so the run reads from the front too
+    r.arms[0].rotation.z = -0.12 - 0.14 * amp;
+    r.arms[1].rotation.z = 0.12 + 0.14 * amp;
+    r.body.rotation.z = Math.sin(this.walkPhase) * 0.06 * amp;
     if (r.head) r.head.rotation.x = -lean * 0.6;
   }
 }
