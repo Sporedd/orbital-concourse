@@ -9,20 +9,26 @@ import { PALETTE, glowLum } from '@/rendering/style';
 
 // Brutalist Arena enemy palette (docs/ART_DIRECTION.md §1.4, §8): matte olive-grey plates,
 // THREAT emissive only on what you should shoot (visor slits, cores, weak points).
-const ARMOUR = PALETTE.ARMOUR;
-const ARMOUR_LIT = PALETTE.ARMOUR_LIT;
-const UNDERSUIT = PALETTE.UNDERSUIT;
+// Grimdark revision (§15): same armour design, plates ×0.8 darker, threat marks brighter so
+// they pop out of the dark arena.
+const darker = (hex: number, k = 0.8) => {
+  const r = Math.round(((hex >> 16) & 0xff) * k), g = Math.round(((hex >> 8) & 0xff) * k), b = Math.round((hex & 0xff) * k);
+  return (r << 16) | (g << 8) | b;
+};
+const ARMOUR = darker(PALETTE.ARMOUR);
+const ARMOUR_LIT = darker(PALETTE.ARMOUR_LIT);
+const UNDERSUIT = darker(PALETTE.UNDERSUIT);
 const STEEL_DARK = PALETTE.STEEL_DARK;
 const THREAT = PALETTE.THREAT;
 /**
- * Visor / eye glow: lum 2.0 (threat band 1.5–2.5). The slits are only a few pixels tall at
- * 20–30 m, so they sit at the upper-middle of the band to bloom into a readable red dash.
+ * Visor / eye glow: lum 3.0 (grimdark: above the old 1.5–2.5 band). The slits are only a few
+ * pixels tall at 20–30 m; in the dark arena they are the first thing you see, a blooming red dash.
  */
-const VISOR = glowLum(THREAT, 2.0, 12);
-/** Back-rim on enemies (spec max 0.5): FLOODLIGHT edge so the olive plates separate from concrete. */
-const ENEMY_RIM = 0.38;
-/** Emissive multiplier that puts THREAT at a luminance target. */
-const threatK = (lum: number) => glowLum(THREAT, lum, 12);
+const VISOR = glowLum(THREAT, 3.0, 16);
+/** Back-rim on enemies (spec max 0.5): a cool edge (LIGHT.rimColor) against the warm smoke. */
+const ENEMY_RIM = 0.5;
+/** Emissive multiplier that puts THREAT at a luminance target (grimdark: ×1.15 on every tier). */
+const threatK = (lum: number) => glowLum(THREAT, lum * 1.15, 16);
 
 /**
  * Boss rigs are built at mob proportions and scaled as a whole (art spec §7: bosses at 2.5–4×
@@ -240,10 +246,10 @@ export function buildBomber(mf: MaterialFactory): Rig {
   const shell = b.toon(ARMOUR);
   const dark = b.toon(UNDERSUIT);
   const ice = b.toon(ARMOUR_LIT);
-  const hot = b.toon(UNDERSUIT, THREAT, threatK(2.5)); // big bright core
+  const hot = b.toon(UNDERSUIT, THREAT, threatK(2.0)); // big bright core (grimdark: a large surface, lower tier so it stays red, not white)
   b.accent = hot;
   const eye = b.glow(THREAT, VISOR);
-  const spark = b.glow(THREAT, glowLum(THREAT, 2.5, 12));
+  const spark = b.glow(THREAT, glowLum(THREAT, 2.8, 16));
 
   for (const sx of SIDES) {
     const leg = b.pivot(b.root, [0.2 * sx, 0.38, 0]);
@@ -336,7 +342,7 @@ export function buildSummoner(mf: MaterialFactory): Rig {
   const ice = b.toon(ARMOUR);
   const hot = b.toon(UNDERSUIT, THREAT, threatK(1.5));
   b.accent = hot;
-  const coreGlow = b.glow(THREAT, glowLum(THREAT, 2.5, 12));
+  const coreGlow = b.glow(THREAT, glowLum(THREAT, 2.8, 16));
   const eye = b.glow(THREAT, VISOR);
 
   const body = b.makeBody(1.7);
@@ -380,7 +386,7 @@ export function buildArtillery(mf: MaterialFactory): Rig {
   const frost = b.toon(ARMOUR_LIT);
   const hot = b.toon(UNDERSUIT, THREAT, threatK(1.5));
   b.accent = hot;
-  const coreGlow = b.glow(THREAT, glowLum(THREAT, 2.5, 12));
+  const coreGlow = b.glow(THREAT, glowLum(THREAT, 2.8, 16));
   const eye = b.glow(THREAT, VISOR);
 
   // legs: order FL, FR, BL, BR (diagonal pairs 0/3 and 1/2)

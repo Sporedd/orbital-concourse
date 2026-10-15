@@ -6,11 +6,11 @@
  */
 import * as THREE from 'three';
 import { makeGlow, makeSurface } from '@/rendering/materials';
-import { LUM, PALETTE, glowLum, type LeagueStyle } from '@/rendering/style';
+import { GRIM, LUM, PALETTE, glowLum, type LeagueStyle } from '@/rendering/style';
 import { StaticBatcher, trs } from './batcher';
 import { Collision } from './collision';
 import {
-  UNIT_BOX, chamferBox, floorRing, floorStripeRing, inwardRy, jerseyGeo, octPrism, outwardRy, polar, stripeBand, triangleGeo,
+  UNIT_BOX, barrelGeo, chamferBox, floorRing, floorStripeRing, inwardRy, jerseyGeo, octPrism, outwardRy, polar, stripeBand, triangleGeo, wedgeGeo,
 } from './geometry';
 
 export type Rand = () => number;
@@ -99,19 +99,22 @@ export class ArenaBuilder {
       this.mats[key] = m;
       b.material(key, m, cast, receive);
     };
-    def('floor', makeSurface({ color: PALETTE.CONCRETE, surface: 'concrete', grime: 0, seams: 1 }), false, true);
-    def('concrete', makeSurface({ color: PALETTE.CONCRETE, surface: 'concrete' }));
-    def('concreteLit', makeSurface({ color: PALETTE.CONCRETE_LIT, surface: 'concrete' }));
-    def('concreteDark', makeSurface({ color: PALETTE.CONCRETE_DARK, surface: 'concrete', grime: 0.1 }));
-    def('standFace', makeSurface({ color: 0x333432, surface: 'concrete', grime: 0 }), false, true);
-    def('standRiser', makeSurface({ color: PALETTE.CONCRETE_DARK, surface: 'concrete', grime: 0, mottle: 0.04 }), false, true);
-    def('steel', makeSurface({ color: PALETTE.STEEL, surface: 'steel' }));
-    def('steelDark', makeSurface({ color: PALETTE.STEEL_DARK, surface: 'steel' }));
-    def('roof', makeSurface({ color: PALETTE.STEEL_DARK, surface: 'flat' }), false, false);
-    def('shadow', makeSurface({ color: PALETTE.SHADOW, surface: 'flat' }), false, true);
-    def('paint', makeSurface({ color: PALETTE.HAZARD_PAINT, surface: 'paint' }), false, true);
-    def('paintDark', makeSurface({ color: PALETTE.SHADOW, surface: 'paint' }), false, true);
-    def('bone', makeSurface({ color: PALETTE.BONE, surface: 'paint', mottle: 0.04 }), false, true);
+    // grimdark (§15): black concrete, rusted steel, oil-stained floor with grated sections
+    def('floor', makeSurface({ color: GRIM.FLOOR, surface: 'concrete', grime: 0, seams: 1, oil: 1, grate: 1, mottle: 0.09 }), false, true);
+    def('concrete', makeSurface({ color: GRIM.CONCRETE, surface: 'concrete', rust: 0.35, mottle: 0.09 }));
+    def('concreteLit', makeSurface({ color: GRIM.CONCRETE_LIT, surface: 'concrete', rust: 0.25, mottle: 0.08 }));
+    def('concreteDark', makeSurface({ color: GRIM.CONCRETE_DARK, surface: 'concrete', grime: 0.1, rust: 0.3 }));
+    def('standFace', makeSurface({ color: 0x1a1816, surface: 'concrete', grime: 0, rust: 0.3 }), false, true);
+    def('standRiser', makeSurface({ color: GRIM.CONCRETE_DARK, surface: 'concrete', grime: 0, mottle: 0.04 }), false, true);
+    def('steel', makeSurface({ color: GRIM.STEEL, surface: 'steel', rust: 0.7, mottle: 0.08 }));
+    def('steelDark', makeSurface({ color: GRIM.STEEL_DARK, surface: 'steel', rust: 0.45 }));
+    def('roof', makeSurface({ color: 0x0f0e0d, surface: 'flat' }), false, false);
+    def('shadow', makeSurface({ color: GRIM.SHADOW, surface: 'flat' }), false, true);
+    def('paint', makeSurface({ color: 0x8a6c1c, surface: 'paint', mottle: 0.14 }), false, true);
+    def('paintDark', makeSurface({ color: GRIM.SHADOW, surface: 'paint' }), false, true);
+    def('bone', makeSurface({ color: 0x9a978f, surface: 'paint', mottle: 0.1 }), false, true);
+    def('cable', makeSurface({ color: GRIM.CABLE, surface: 'steel', sheen: 0.2, mottle: 0, grime: 0 }), false, false);
+    def('barrel', makeSurface({ color: 0x3a2a20, surface: 'steel', rust: 1, mottle: 0.12 }));
     // accent strips (league colour, lum 1.1, fog on)
     def('accent', makeGlow(0xffffff, 1), false, false);
     def('ribbon', makeGlow(0xffffff, 1), false, false);
@@ -134,13 +137,13 @@ export class ArenaBuilder {
     }
     const concrete = ls.concrete;
     const shade = (hex: number, f: number) => new THREE.Color(hex).multiplyScalar(f);
-    (this.mats.floor as THREE.MeshToonMaterial).color.set(concrete);
+    (this.mats.floor as THREE.MeshToonMaterial).color.set(ls.id === 'void' ? concrete : GRIM.FLOOR);
     (this.mats.concrete as THREE.MeshToonMaterial).color.set(concrete);
-    const dark = ls.id === 'void' ? shade(concrete, 0.7) : new THREE.Color(PALETTE.CONCRETE_DARK);
+    const dark = ls.id === 'void' ? shade(concrete, 0.7) : new THREE.Color(GRIM.CONCRETE_DARK);
     (this.mats.concreteDark as THREE.MeshToonMaterial).color.copy(dark);
     (this.mats.standRiser as THREE.MeshToonMaterial).color.copy(dark);
     (this.mats.standFace as THREE.MeshToonMaterial).color.copy(dark).multiplyScalar(0.62);
-    const lit = ls.id === 'void' ? shade(concrete, 1.5) : new THREE.Color(PALETTE.CONCRETE_LIT);
+    const lit = ls.id === 'void' ? shade(concrete, 1.5) : new THREE.Color(GRIM.CONCRETE_LIT);
     (this.mats.concreteLit as THREE.MeshToonMaterial).color.copy(lit);
     const fu = (this.mats.floor as THREE.MeshToonMaterial).userData.uSurf as { value: THREE.Vector4 } | undefined;
     if (fu) fu.value.z = ls.floorSheen;
@@ -273,6 +276,10 @@ export class ArenaBuilder {
       this.boxLocal('ribbon', F, 0, DIM.wallH + 0.04, depth / 2 + 0.24, panelW + 0.1, 0.07, 0.02);
       // low steel kick plate (patched steel in Scrap reads as plates)
       if (this.rand() < 0.22) this.boxLocal('steel', F, (this.rand() - 0.5) * 2, 0.9, depth / 2 + 0.03, 1.4 + this.rand(), 1.1 + this.rand() * 0.8, 0.05);
+      // grimdark: rusted steel kick band and a riveted rib at the panel seam (visual only, 15 cm)
+      this.boxLocal('steel', F, 0, 0.42, depth / 2 + 0.04, panelW, 0.62, 0.06);
+      this.boxLocal('steel', F, -panelW / 2, DIM.wallH / 2, depth / 2 + 0.07, 0.3, DIM.wallH - 0.1, 0.16);
+      this.boxLocal('steelDark', F, -panelW / 2, DIM.wallH / 2, depth / 2 + 0.16, 0.12, DIM.wallH - 0.4, 0.04);
       const a0 = deg - step / 2;
       this.arcBoxes(a0, a0 + step, DIM.wallIn, DIM.wallIn + 1.0, 0, DIM.wallH + DIM.copingH);
     }
@@ -348,7 +355,56 @@ export class ArenaBuilder {
       const h = DIM.roofY - 1;
       this.slabLocal('concrete', F, 0, h / 2, 0, 1.6, h, 1.6, 0, 0.1);
       this.boxLocal('accent', F, 0, 13, 0.81, 0.12, 14, 0.02);
+      // grimdark buttress: a massive footing rising above the wall coping with a 45° set-back,
+      // steel bands and a riveted plate (the boss gatehouse keeps its clean jambs)
+      const nearBoss = Math.abs(((deg - 270 + 540) % 360) - 180) < 12;
+      if (!nearBoss) {
+        this.slabLocal('concreteDark', F, 0, 3.6, 0.25, 2.2, 7.2, 2.1, 0, 0.14);
+        this.add('concreteDark', wedgeGeo(2.2, 1.1, 1.05), this.tmpM.multiplyMatrices(F, trs(0, 7.75, 0.775)).clone());
+        this.boxLocal('steelDark', F, 0, 6.4, 0.25, 2.32, 0.4, 2.22);
+      }
+      for (const y of [9.2, 16, 22.5]) this.boxLocal('steelDark', F, 0, y, 0, 1.78, 0.42, 1.78);
+      this.boxLocal('steel', F, 0, 18.3, 0.83, 1.3, 2.6, 0.06);
+      // vertical rust-stained rib up the outer side (heavier silhouette against the stands)
+      this.boxLocal('concreteDark', F, 0, h / 2 + 3, -1.0, 0.9, h - 6, 0.6);
     }
+  }
+
+  /** Cable bundles sagging along the tier faces between the pillars (smooth tubes, decor only). */
+  cables(): void {
+    const sagged = (a: THREE.Vector3, b: THREE.Vector3, sag: number) => {
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= 8; i++) {
+        const t = i / 8;
+        const p = new THREE.Vector3().lerpVectors(a, b, t);
+        p.y -= 4 * sag * t * (1 - t);
+        pts.push(p);
+      }
+      return new THREE.CatmullRomCurve3(pts);
+    };
+    const P = (deg: number, r: number, y: number) => {
+      const [x, z] = polar(deg, r);
+      return new THREE.Vector3(x, y, z);
+    };
+    for (const [r, y] of [[TIERS[1].r0 - 0.12, TIERS[1].faceBottom - 0.1], [TIERS[2].r0 - 0.12, TIERS[2].faceBottom - 0.1]] as const) {
+      for (let i = 0; i < 24; i++) {
+        const d0 = 7.5 + i * 15;
+        for (let k = 0; k < 3; k++) {
+          const sag = 0.5 + k * 0.35 + this.rand() * 0.3;
+          const tube = new THREE.TubeGeometry(sagged(P(d0, r - k * 0.06, y - k * 0.05), P(d0 + 15, r - k * 0.06, y - k * 0.05), sag), 14, 0.045 + k * 0.012, 5, false);
+          this.add('cable', tube, new THREE.Matrix4(), false);
+          tube.dispose();
+        }
+      }
+    }
+  }
+
+  /** Floor burn barrel (rusted drum, two hoops, charred rim); the fire itself lives in fire.ts. */
+  burnBarrel(x: number, z: number, h: number, y0 = 0): void {
+    this.add('barrel', barrelGeo(0.42, h), trs(x, y0 + h / 2, z), true);
+    for (const y of [0.22, h - 0.2]) this.add('steelDark', barrelGeo(0.445, 0.07), trs(x, y0 + y, z), true);
+    this.add('shadow', barrelGeo(0.38, 0.02), trs(x, y0 + h - 0.06, z), true);
+    this.col.addBoxC(x, z, 0.9, 0.9, h, y0);
   }
 
   /** Three stand tiers with tier faces, risers, railings; back wall to the roof. */

@@ -155,6 +155,26 @@ export function triangleGeo(s: number): THREE.BufferGeometry {
   });
 }
 
+/**
+ * Wedge (45°-ish set-back cap): full depth at the bottom, sloping up to a ridge at the back
+ * (local -z). Base at y = -h/2, front at +z.
+ */
+export function wedgeGeo(w: number, h: number, d: number): THREE.BufferGeometry {
+  return cached(`wd:${w}:${h}:${d}`, () => {
+    const hw = w / 2, hh = h / 2, hd = d / 2;
+    const pts = [
+      new THREE.Vector3(-hw, -hh, -hd), new THREE.Vector3(hw, -hh, -hd), new THREE.Vector3(-hw, -hh, hd), new THREE.Vector3(hw, -hh, hd),
+      new THREE.Vector3(-hw, hh, -hd), new THREE.Vector3(hw, hh, -hd),
+    ];
+    return new ConvexGeometry(pts);
+  });
+}
+
+/** Octagonal drum (burn barrel, hoops), centred, height h. */
+export function barrelGeo(r: number, h: number): THREE.BufferGeometry {
+  return cached(`bar:${r}:${h}`, () => new THREE.CylinderGeometry(r, r, h, 10, 1, false));
+}
+
 export const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 export const UNIT_PLANE = new THREE.PlaneGeometry(1, 1);
 

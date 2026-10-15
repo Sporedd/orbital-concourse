@@ -58,7 +58,7 @@ void main() {
   gl_Position = projectionMatrix * mv;
   float tw = 0.8 + 0.2 * sin( uTime * ( 0.35 + fract( aPhase * 7.1 ) * 0.6 ) + aPhase * 6.2831 );
   vec3 dir = normalize( position );
-  vBright = tw * smoothstep( 0.05, 0.3, dir.y ) * ( 0.45 + aSize * 0.35 ) * 0.6;
+  vBright = tw * smoothstep( 0.05, 0.3, dir.y ) * ( 0.45 + aSize * 0.35 ) * 0.32;
   gl_PointSize = max( 1.0, aSize * uPixelRatio * 1.6 );
 }
 `;
@@ -86,6 +86,7 @@ uniform float uMode;
 uniform float uRing;
 uniform float uTime;
 uniform vec2 uSun; // light direction in disc space
+uniform float uLit;
 varying vec2 vUv;
 ${NOISE}
 void main() {
@@ -117,8 +118,11 @@ void main() {
     base = mix( base, c0, smoothstep( 0.55, 0.8, bands ) * 0.8 + cloud * 0.5 );
     float ndl = dot( n, normalize( vec3( uSun, 0.35 ) ) );
     float lit = smoothstep( -0.04, 0.04, ndl );
-    // lit side ≈ lum 0.5 (pale, never blooms); a faint night side keeps the full disc readable
-    col = base * lit * 0.8 + base * 0.07;
+    // grimdark: a dead, ashen body. Lit side ≈ lum 0.3 (the brightest thing in the sky, still
+    // below bloom), craters as dark blotches, an almost black night side
+    float crater = smoothstep( 0.55, 0.75, fbm( n.xy * 7.0 + 3.1 ) );
+    base = mix( vec3( dot( base, vec3( 0.333 ) ) ), base, 0.4 ) * ( 1.0 - crater * 0.35 );
+    col = base * lit * 0.42 * uLit + base * 0.012;
     // thin atmosphere rim
     float rim = smoothstep( R - 0.03, R, r ) * ( 1.0 - smoothstep( R, R + 0.02, r ) );
     float atm = rim * 0.5 * smoothstep( -0.2, 0.3, dot( normalize( p ), normalize( uSun ) ) );
@@ -160,8 +164,8 @@ export function createSky(rand: () => number): Sky {
   // --- dome
   const domeMat = new THREE.ShaderMaterial({
     uniforms: {
-      uHorizon: { value: new THREE.Color(0x15181c) },
-      uZenith: { value: new THREE.Color(0x07080a) },
+      uHorizon: { value: new THREE.Color(0x07070a) },
+      uZenith: { value: new THREE.Color(0x020203) },
     },
     vertexShader: domeVert,
     fragmentShader: domeFrag,
@@ -213,7 +217,7 @@ export function createSky(rand: () => number): Sky {
   // --- planet (billboard disc)
   const planetDir = new THREE.Vector3(0.42, Math.sin(THREE.MathUtils.degToRad(62)), -0.38).normalize();
   const planetMat = new THREE.ShaderMaterial({
-    uniforms: { uMode: { value: 0 }, uRing: { value: 0 }, uTime: { value: 0 }, uSun: { value: new THREE.Vector2(-0.8, 0.45) } },
+    uniforms: { uMode: { value: 0 }, uRing: { value: 0 }, uTime: { value: 0 }, uSun: { value: new THREE.Vector2(-0.8, 0.45) }, uLit: { value: 1 } },
     vertexShader: planetVert,
     fragmentShader: planetFrag,
     transparent: true,
@@ -229,7 +233,7 @@ export function createSky(rand: () => number): Sky {
   // --- station spoke: long rail with lit window dots
   const spoke = new THREE.Group();
   const railMat = new THREE.MeshBasicMaterial({ color: 0x0c0d0f, fog: false });
-  const winMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xf3eedf).multiplyScalar(0.85), fog: false, toneMapped: false });
+  const winMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffa552).multiplyScalar(0.22), fog: false, toneMapped: false });
   const rail = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), railMat);
   rail.scale.set(150, 3.2, 3.2);
   spoke.add(rail);
@@ -269,10 +273,12 @@ export function createSky(rand: () => number): Sky {
       // quarter: small limb low in the oculus; half: medium; large: big + ringed; eclipse: big
       // north (over the boss gate, the direction the player faces from the entrance), 50–62°
       // elevation: seen through the oculus above the north rim from most of the floor
-      const sizes: Record<PlanetMode, number> = { none: 0, quarter: 150, half: 185, large: 235, eclipse: 185 };
+      // grimdark: smaller and dimmer than the brutalist spec; Scrap gets a small dead moon
+      const sizes: Record<PlanetMode, number> = { none: 0, dead: 74, quarter: 105, half: 125, large: 160, eclipse: 140 };
       planetScale = sizes[mode];
-      planetMat.uniforms.uSun.value.set(mode === 'quarter' ? -1.0 : -0.8, mode === 'quarter' ? 0.15 : 0.45);
-      const elev = mode === 'quarter' ? 50 : mode === 'half' ? 54 : mode === 'large' ? 58 : 62;
+      planetMat.uniforms.uSun.value.set(mode === 'quarter' ? -1.0 : mode === 'dead' ? -0.35 : -0.8, mode === 'quarter' ? 0.15 : 0.45);
+      planetMat.uniforms.uLit.value = mode === 'dead' ? 1.15 : 1;
+      const elev = mode === 'quarter' ? 50 : mode === 'half' || mode === 'dead' ? 54 : mode === 'large' ? 58 : 62;
       planetDir.set(0.3, 0, -0.95).normalize().multiplyScalar(Math.cos(THREE.MathUtils.degToRad(elev)));
       planetDir.y = Math.sin(THREE.MathUtils.degToRad(elev));
       planetDir.normalize();

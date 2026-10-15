@@ -5,9 +5,8 @@
  * slot in a ring buffer; everything else runs on the GPU.
  */
 import * as THREE from 'three';
-import { PALETTE } from '@/rendering/style';
 
-const MAX = 384;
+const MAX_DEFAULT = 384;
 
 const vert = /* glsl */ `
 attribute vec3 aStart;
@@ -63,7 +62,15 @@ export interface Puffs {
   update(dt: number): void;
 }
 
-export function createPuffs(rand: () => number): Puffs {
+export interface PuffOptions {
+  /** sRGB colour (default: dark warm steam for the grimdark arena). */
+  color?: THREE.ColorRepresentation;
+  alpha?: number;
+  max?: number;
+}
+
+export function createPuffs(rand: () => number, opts: PuffOptions = {}): Puffs {
+  const MAX = opts.max ?? MAX_DEFAULT;
   const geo = new THREE.BufferGeometry();
   const start = new Float32Array(MAX * 3);
   const vel = new Float32Array(MAX * 3);
@@ -82,8 +89,8 @@ export function createPuffs(rand: () => number): Puffs {
   const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
     uTime: { value: 0 },
     uScale: { value: 500 },
-    uColor: { value: new THREE.Color(PALETTE.HAZE_LIT).multiplyScalar(0.55) },
-    uAlpha: { value: 0.28 },
+    uColor: { value: new THREE.Color(opts.color ?? 0x4a423b) },
+    uAlpha: { value: opts.alpha ?? 0.3 },
   }]);
   const mat = new THREE.ShaderMaterial({
     uniforms,

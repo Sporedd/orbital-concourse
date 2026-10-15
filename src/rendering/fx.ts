@@ -58,7 +58,8 @@ const SHELL_LIFE = 0.25;
  * floor or a wall simply vanishes; dust in floodlight reads lighter than the surface it hangs in
  * front of (as in the concept frame), so it uses a lit, slightly warm grey.
  */
-const DUST = 0xb4b1a9;
+/** Grimdark: dust is dark warm grey (unlit sprites must not glow in the dark arena). */
+const DUST = 0x4a433c;
 /** Tracers never get thinner than this many radians on screen (~1.4 px at 720p, 85° fov). */
 const TRACER_MIN_ANGLE = 0.0016;
 
@@ -403,7 +404,7 @@ export function createFxImpl(ctx: GameContext): Fx {
       // concrete: grey dust puff, 6–10 hot sparks, 3 chips, scorch decal
       spawnDust(point, tN, 5, 1.2, 0.3, 0.32);
       spawnSparks(point, tN, color, 6 + Math.floor(rnd() * 5), 7, 0.65, 3.0, 0.25, 0.04, 1.2);
-      spawnDebris(point, tN, 0x6f6d68, 3, 3, 0.045);
+      spawnDebris(point, tN, 0x34302c, 3, 3, 0.045);
       placeDecal(point, tN);
     },
 
@@ -430,7 +431,7 @@ export function createFxImpl(ctx: GameContext): Fx {
 
       spawnSparks(center, UP, color, 30, 9 * Math.sqrt(e.radius / 3), 1.0, 3.0, 0.55, 0.06);
       spawnDust(center, UP, 14, 3 * Math.sqrt(e.radius / 3), 1.1, 0.9 * Math.sqrt(e.radius / 3));
-      spawnDebris(center, UP, 0x4a4a48, 8, 7, 0.1);
+      spawnDebris(center, UP, 0x221f1c, 8, 7, 0.1);
       if (e.ring.visible) hazePuff(center.x, center.z, e.radius);
       camera.getWorldPosition(camPos);
       const dist = camPos.distanceTo(center);

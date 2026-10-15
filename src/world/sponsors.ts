@@ -175,7 +175,7 @@ export function createSponsors(): Sponsors {
     const bh = t1.faceTop - t1.faceBottom - 0.4;
     const bw = 6.4;
     const geo = new THREE.PlaneGeometry(bw, bh);
-    const housingMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.STEEL_DARK).multiplyScalar(0.55) });
+    const housingMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.STEEL_DARK).multiplyScalar(0.25) });
     const housingGeo = new THREE.BoxGeometry(bw + 0.3, bh + 0.25, 0.2);
     BILLBOARD_ANGLES.forEach((deg, i) => {
       const led = new LedSurface(128, 28);

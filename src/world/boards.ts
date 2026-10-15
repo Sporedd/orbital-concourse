@@ -97,8 +97,9 @@ export class LedSurface {
 
   setColors(bone: number, accent: number): void {
     const u = this.material.uniforms;
-    (u.uBone.value as THREE.Color).set(bone).multiplyScalar(glowLum(bone, 0.9));
-    (u.uAccent.value as THREE.Color).set(accent).multiplyScalar(glowLum(accent, 0.9));
+    // grimdark: boards are a dim glow in the dark (lum 0.55), not a light source
+    (u.uBone.value as THREE.Color).set(bone).multiplyScalar(glowLum(bone, 0.55));
+    (u.uAccent.value as THREE.Color).set(accent).multiplyScalar(glowLum(accent, 0.55));
   }
 
   /** Draw with a clean black canvas; colours: 'bone' → R, 'accent' → G. */
@@ -157,7 +158,7 @@ export function createBoards(gates: { angle: number; kind: string }[]): Boards {
   // ---- hanging scoreboard (2 faces for Scrap/Iron, 4-face cube for Steel+) --------------
   const BW = 6, BH = 3;
   const score = new LedSurface(96, 48);
-  const housingMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.STEEL_DARK).multiplyScalar(0.6) });
+  const housingMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.STEEL_DARK).multiplyScalar(0.25) });
   const board = new THREE.Group();
   board.position.set(0, 20, 0);
   const housing = new THREE.Mesh(new THREE.BoxGeometry(BW + 0.3, BH + 0.4, BW + 0.3), housingMat);

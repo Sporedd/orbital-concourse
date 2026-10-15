@@ -27,6 +27,8 @@ varying vec2 vUv;
 varying float vShade;
 varying float vFlash;
 varying float vSeed;
+varying float vLighter;
+uniform float uLighters;
 #include <fog_pars_vertex>
 float h11( float p ) { p = fract( p * 0.1031 ); p *= p + 33.33; p *= p + p; return fract( p ); }
 void main() {
@@ -50,6 +52,8 @@ void main() {
     }
   }
   vFlash = fl;
+  // grimdark: a few lighters / hand torches held up in the dark stands (flickering)
+  vLighter = h11( s * 53.1 ) < uLighters ? ( 0.75 + 0.25 * sin( t * 17.0 + s * 90.0 ) * sin( t * 6.3 + s * 40.0 ) ) : 0.0;
   vShade = aSeed.y;
   vSeed = s;
   vec4 mvPosition = viewMatrix * vec4( p, 1.0 );
@@ -63,10 +67,12 @@ uniform vec3 uDark;
 uniform vec3 uLight;
 uniform vec3 uWrist;
 uniform float uFlashI;
+uniform vec3 uFlame;
 varying vec2 vUv;
 varying float vShade;
 varying float vFlash;
 varying float vSeed;
+varying float vLighter;
 #include <fog_pars_fragment>
 float sdEll( vec2 p, vec2 r ) { float k = length( p / r ); return ( k - 1.0 ) * min( r.x, r.y ); }
 void main() {
@@ -76,8 +82,19 @@ void main() {
   vec2 bq = abs( q - vec2( 0.0, 0.24 ) ) - vec2( 0.22, 0.26 );
   float body = length( max( bq, 0.0 ) ) + min( max( bq.x, bq.y ), 0.0 );
   float dd = min( head, min( sh, body ) );
+  // raised arm + flame for lighter holders
+  float fl = 1e3;
+  if ( vLighter > 0.0 ) {
+    float side = sign( fract( vSeed * 3.0 ) - 0.5 );
+    vec2 ab = abs( q - vec2( 0.2 * side, 0.68 ) ) - vec2( 0.035, 0.16 );
+    float arm = length( max( ab, 0.0 ) ) + min( max( ab.x, ab.y ), 0.0 );
+    dd = min( dd, arm );
+    fl = length( ( q - vec2( 0.2 * side, 0.89 ) ) * vec2( 1.0, 0.6 ) ) - 0.03 * ( 0.8 + 0.4 * fract( vSeed * 11.0 ) );
+    dd = min( dd, fl );
+  }
   if ( dd > 0.0 ) discard;
   vec3 col = mix( uDark, uLight, vShade );
+  if ( fl <= 0.0 ) col = uFlame * vLighter;
   if ( vFlash > 0.5 && abs( q.x ) < 0.07 && abs( q.y - 0.7 ) < 0.07 ) col = vec3( uFlashI );
   if ( uWrist.r + uWrist.g + uWrist.b > 0.0 && length( q - vec2( 0.17 * sign( fract( vSeed * 7.0 ) - 0.5 ), 0.2 ) ) < 0.035 ) col = uWrist;
   gl_FragColor = vec4( col, 1.0 );
@@ -144,8 +161,10 @@ export function createCrowd(rand: () => number): Crowd {
     uWaveAngle: { value: 0 },
     uWaveAmp: { value: 0 },
     uFlash: { value: flashes },
-    uDark: { value: new THREE.Color(0x1f2124) },
-    uLight: { value: new THREE.Color(0x3a3c40) },
+    uDark: { value: new THREE.Color(0x0a0a0a) },
+    uLight: { value: new THREE.Color(0x1b1a19) },
+    uLighters: { value: 0.012 },
+    uFlame: { value: new THREE.Color(0xff8a2e).multiplyScalar(5) },
     uWrist: { value: new THREE.Color(0, 0, 0) },
     uFlashI: { value: 4 },
   }]);

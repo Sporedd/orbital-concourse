@@ -8,7 +8,7 @@
  *  - hazePuff(): explosions raise the ground-haze alpha locally for ~2 s.
  */
 import * as THREE from 'three';
-import { PALETTE } from './style';
+import { GRIM } from './style';
 
 const PUFFS = 4;
 const puffData = Array.from({ length: PUFFS }, () => new THREE.Vector4(0, 0, 1, -100)); // x, z, radius, startTime
@@ -102,7 +102,7 @@ void main() {
   // slow drifting density so the layer reads as haze, not a sheet
   vec2 q = vec2( atan( vW.z, vW.x ) * 9.0 + uTime * 0.015, vW.y * 0.22 - uTime * 0.01 );
   float n = 0.65 + 0.35 * ( vn( q ) * 0.65 + vn( q * 2.3 + 5.1 ) * 0.35 );
-  float a = uAlpha * pow( 1.0 - t, 1.25 ) * n * smoothstep( 1.0, 6.0, vDepth );
+  float a = uAlpha * pow( 1.0 - t, 0.7 ) * n * smoothstep( 1.0, 6.0, vDepth );
   gl_FragColor = vec4( uColor, a );
 }
 `;
@@ -124,7 +124,9 @@ export interface Haze {
 export function createHaze(): Haze {
   const group = new THREE.Group();
   group.name = 'haze';
-  const color = new THREE.Color(PALETTE.HAZE_LIT);
+  // grimdark: low smoke over the floor, a dark smoke band in front of the stands
+  const color = new THREE.Color(GRIM.SMOKE);
+  const bandColor = new THREE.Color(0x4a2c18);
   const groundMats: THREE.ShaderMaterial[] = [];
   const time = { value: 0 };
   const puffs = { value: puffData };
@@ -154,7 +156,7 @@ export function createHaze(): Haze {
     const geo = new THREE.CylinderGeometry(r, r, h, 72, 1, true);
     geo.translate(0, h / 2, 0);
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: color }, uAlpha: { value: 0.18 * BANDS[i][2] }, uH: { value: h }, uTime: time },
+      uniforms: { uColor: { value: bandColor }, uAlpha: { value: 0.18 * BANDS[i][2] }, uH: { value: h }, uTime: time },
       vertexShader: bandVert,
       fragmentShader: bandFrag,
       transparent: true,

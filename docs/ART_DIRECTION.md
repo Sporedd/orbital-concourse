@@ -4,6 +4,8 @@ Implementation spec for the chosen look. It is written so an engineer can build 
 Boards (overview, C, C HUD/UI, leagues, and alternatives A and B): https://claude.ai/artifact/UaxZF3PpDDHhko759k5eQR
 Mood target: `docs/concepts/C-brutalist.png`. Take from it the concrete, floodlight shafts in haze, orange accent strips, silhouetted crowd and hazard floor paint. Leave out the photoreal detail and texture work, and ignore its gibberish scoreboard glyphs.
 
+> **Grimdark revision (2026-10-15):** the arena's lighting, atmosphere and dressing now follow `docs/concepts/D-grimdark-arena.png`. **§15 overrides §1.1, §5, §6, §7 and §12 wherever they disagree.** The enemy and boss armour design (§8) stays as it is: only its brightness changed.
+
 > **One sentence:** a concrete colosseum on an orbital station. The world is matte and near-grey, and the only saturated things on screen are light, loot, threat and one accent colour per league.
 
 ---
@@ -256,7 +258,13 @@ Put the colours and per-league numbers in **one data file** `src/rendering/style
 
 **Gear growth (§11 of the plan):** item level adds **slabs, ribs, fins and antenna masts** in discrete steps (ilvl 1: 1 slab; 10: + fins; 20: + masts and double plates). Never organic horns. Rarity is the only colour on gear, as emissive seams: common none; uncommon to epic as a seam at lum 1.2; legendary as a seam at lum 2.5 plus slow motes.
 
-**Viewmodel guns:** STEEL receiver, STEEL_DARK polymer, chamfered blocky parts, a BONE stencil serial plate. Rarity seam (as gear). Element tints the muzzle and the seam. Item level lengthens the barrel shroud, adds heat-sink fins and grows the magazine.
+**Viewmodel guns** (`src/player/weaponModels.ts`, target `docs/concepts/E-weapon-sheet.png`):
+- Matte black chamfered plates (`#2C2F33`). Every bevel is split into a lighter **worn-edge** slot (`#4B5157`, bare steel showing through), so the light draws the edges.
+- Extruded side-profile slabs for receivers and stocks, **faceted cylinders** in round steel (`#4A5158`) for barrels, bolts and rivets, and rubber grips with finger grooves.
+- Detail: vent slots in the shrouds, top rails, hex rivets, and exposed cables on the camera side (left, -X).
+- Light: **one orange indicator lamp per gun**, plus cyan micro-readouts on the rifle and the sniper. Rarity and element show only on the accent seam and the muzzle.
+- Growth: item level adds **thin glowing seam strips on the growth fins**, a longer shroud and a bigger magazine.
+- Guns carry a small self-lit floor (`GUN_SELF_LIT`), so they still read in the darkest corners of the grimdark arena (§15).
 
 ---
 
@@ -407,3 +415,113 @@ Each tier inside a league adds one visible step: +10 % crowd, then one more bann
 - Use the accent colour on loot, enemies or UI health, or use THREAT on anything friendly.
 - Add snow, aurora, lanterns, wooden huts or cartoon smoke puffs.
 - Put rounded corners, glassmorphism blur or gradient fills on UI panels.
+
+---
+
+## 15. Grimdark revision (2026-10-15)
+
+User feedback: *too bright, not enough like the chosen design; add some Warhammer 40k mood.* The new mood target is `docs/concepts/D-grimdark-arena.png`: a black arena, pools of hard sodium light in deep shadow, smoke and ash, red warning lamps and fire, and a heavy gothic-industrial build.
+**No Games Workshop IP.** That means no skulls, aquilas, purity seals, religious iconography or chapter symbols. The vocabulary is our own: black concrete, rusted steel, buttresses, chains, cables, grates, burn barrels, braziers, red lamps, sodium floods, tattered sponsor banners, rust streaks and oil stains.
+The enemy and boss **armour design stays** (the layered matte plates from C). Only the plates got darker and the threat marks brighter.
+
+### 15.1 Measured result
+
+Mean screen luma (sRGB, 320×180 downsample of the canvas, `window.__rendering.measure()`), Scrap League, three fixed fight views (`[0,1.65,23.5 → 0,1.2,0]`, `[-10,1.65,10 → 8,2,-12]`, `[18,1.65,-14 → -10,2,6]`):
+
+| | before (brutalist) | after (grimdark) |
+|---|---|---|
+| mean of the three views | **0.362** | **0.090 (25 % of before)** |
+| per view | 0.321 / 0.368 / 0.397 | 0.084 / 0.076 / 0.110 |
+| 40th percentile (p40) | 0.25–0.33 | 0.047–0.066 |
+
+The darkest 40 % of each frame sits at or under ≈ 0.06. The highlights are the sodium pools and shafts, the cold slit on the plinth, fire, lamps and threat emissives.
+
+### 15.2 Palette (`GRIM` in `src/rendering/style.ts`)
+
+`PALETTE` is unchanged, because gear, the viewmodel and loot still use its STEEL tokens. World code uses `GRIM`:
+
+| Token | Hex | Role |
+|---|---|---|
+| CONCRETE / _LIT / _DARK | `#34302C` / `#48423B` / `#221F1C` | black concrete (linear lum ≤ 0.06) |
+| FLOOR | `#3A3631` | play floor (oil stains, grated slabs) |
+| STEEL / STEEL_DARK | `#3E3029` / `#1E1B19` | rusted steel |
+| RUST | `#7A3A1A` | rust streak tint (shader) |
+| SODIUM | `#FF8A2E` | ≈ 2200 K floodlights, shafts, pools (Void keeps a cold `#C9C2FF`) |
+| SODIUM_WARM | `#FFA552` | ≈ 2700 K twin wall lamps |
+| FIRE | `#FF6A1C` | burn barrels and braziers |
+| WARN_RED | `#D8200E` | red warning lamps (architecture). THREAT `#FF2238` stays hostile-only |
+| SLIT | `#9DB6D6` | cold light through the dome slit (key, plinth shaft) |
+| HAZE | `#2A1A10` | fog: dark warm smoke |
+| SMOKE / CLOTH / ASH | `#3A2E25` / `#43100C` / `#8A8580` | ground haze / banner cloth / falling ash |
+
+### 15.3 Light rig (`LIGHT` in style.ts, `pipeline.ts`, `stage.ts`, `fire.ts`)
+
+| Light | Before | Grimdark |
+|---|---|---|
+| Key (directional, shadows) | FLOODLIGHT, 4.2 | **SLIT `#9DB6D6`, 1.4**: faint cold light from above |
+| Hemisphere | `#3A3E45` / `#6F6D68`, 7.5 | `#2A3446` / `#5A3018` (cold sky, warm fire bounce), **4** |
+| Ambient | HAZE, 3.0 | `#3A2A20`, **0.6** |
+| Floodlight spots | 2600 cd, 0.38 rad, penumbra 0.6 | **36 000 cd × towerGain, 0.13 rad, penumbra 0.45**: hard pools about 5 m across |
+| Floor pool decal | 0.18 | 0.14 × towerGain |
+| Shafts | gain 3.6 | gain **3.2**, radius 5.2 m, intensity × towerGain |
+| Slit | none | 1 cold SpotLight (9000 cd, 0.13 rad) + shaft + pool on the boss plinth, every league |
+| Fire | none | pooled flickering PointLights (`FIRE`, 40 cd, 13 m), **high 6 / low 3** (`QUALITY_PRESETS.fireLights`), the container-roof fires first; an additive warm floor pool per barrel |
+| Gate lamps | idle grey | idle **dim WARN_RED** (lum 0.5) + red smoke halo + 2 caged red jamb lamps; THREAT strobe on a spawn (unchanged) |
+| Boss under-glow | pool ×1.3, light 6 | pool **×3.0**, light **30** at 0.7 m in front of the boss (lights it from below) |
+
+### 15.4 Grade (`GradeShader` in pipeline.ts)
+
+exposure **1.25** · soft toe `c *= l / (l + 0.014)` (crushes the blacks without clipping) · contrast 1.1 · lift (0.0012, 0.001, 0.0009) · shadow tint (1.0, 0.98, 0.97), highlight tint (1.06, 0.99, 0.88) · saturation `mix(0.62, 1.15, smoothstep(0.08, 1.2, lum))` · vignette **0.6**, `smoothstep(0.18, 0.8, r)` · grain **0.05** · bloom unchanged (0.7 / 0.6 / 1.0). Background `#030304`.
+
+### 15.5 Atmosphere
+
+- **Fog** `FogExp2(#2A1A10)`, density by league: Scrap 0.022, Iron 0.020, Steel 0.018, Star 0.017, Void 0.016.
+- **Stand haze band:** colour `#4A2C18`, alpha 0.5, falloff `(1 - t)^0.7`. It is warm lit smoke, so the stands and pillars read as silhouettes against it.
+- **Ground haze** in SMOKE at 0.12, and the haze folded into the surface shader at `(0.016, 0.012, 0.009)`, strength 0.34–0.4.
+- **Smoke columns** rise from every lit fire (a second `Puffs` pool, `#2C231C`, alpha 0.32). Gate puffs and **steam vents** from the door seals every 5–14 s use dark steam `#4A423B`.
+- **Embers** rise from the fires (22 per site, additive). **Ash** (700 flakes over the pit, 7 % of them hot orange) falls slowly with sway.
+- **Sky:** a dome from `#020203` to `#07070A`, stars ×0.5, station windows dimmed to sodium ×0.22. The planet is smaller and dimmer: Scrap gets a small dead moon (`dead`, 74), then quarter 105, half 125, large 160, eclipse 140. Its lit side is about lum 0.3 (desaturated, with craters).
+
+### 15.6 Dressing
+
+- **Surface shader** (`materials.ts`, one program, `concourse-c-surface-v2-grim`). `uSurf2 = (seams, rust, oil, grate)`:
+  - rust streaks: vertically stretched noise toward `uRust`, on concrete 0.25–0.35, steel 0.45–0.8 and barrels 1;
+  - oil stains on the floor plane;
+  - grated slabs on the floor: 20 % of the 4 m cells plus the drain ring at r 29–30.6, with 9 cm bars over a black pit that fade to their average value where they would alias.
+- **Characters** (surfaces with a rim) get a small readability fill, `uCharFill (0.42, 0.38, 0.35) × albedo`, and a cool rim `#93A8C4`.
+- **Buttresses:** every pillar (except the two at the boss gatehouse) gets a 2.2 × 7.2 m footing above the wall coping, a wedge set-back, steel bands at 6.4, 9.2, 16 and 22.5 m, a riveted plate and an outer rib. The wall gets a rusted kick band and a steel rib at every panel seam.
+- **Chains** (`chains.ts`): one InstancedMesh of about 3k links. Swags between the pillar fronts at 21.5 m and 17.2 m, hangers with hooks from the oculus trusses and the roof lip.
+- **Cables** (`props.cables`): three sagging tubes per span under the tier-1 and tier-2 faces.
+- **Burn barrels** (`BARREL_SITES`): one on each cargo container roof (fire in the middle of the pit), plus 4 on the floor in front of the sponsor plates. They are solid: floor barrels are 0.95 m boxes, roof barrels sit on the containers. **Braziers** stand on the wall coping.
+- **Banners** (`banners.ts`): 2.3 × 8.2 m oxblood cloth on poles between the pillars. Each has an accent band, our own pit crest (a ring with stacked chevrons), a sponsor word in stacked stencil letters, and a torn, holed hem (alpha-tested). The vertex shader sways them.
+- **Glows** (`glows.ts`): one additive instanced billboard batch draws the flames (noise tongues), the smoke halos and the lamp dots. Flicker modes: steady, fire, pulse, failing lamp.
+- **Lamps:** red warning lamps on the pillar fronts (some failing) and twin sodium wall lamps with halos.
+- **Crowd:** darker (`#0A0A0A` to `#1B1A19`), with 1.2 % holding up a flickering lighter or torch.
+- **LED boards** dimmed to lum 0.55, with darker housings.
+- **FX:** impact dust `#4A433C` and darker debris (unlit sprites must not glow).
+
+### 15.7 Enemies (`src/enemies/models.ts`, brightness only)
+
+Same models and plating. Plates ×0.8 (ARMOUR, ARMOUR_LIT, UNDERSUIT), visor lum 2.0 → **3.0**, every `threatK` tier ×1.15, cores and weak points at lum 2.8. The rim is 0.5 in the cool rim colour. Bosses get the stronger red under-glow from §15.3.
+
+### 15.8 Per-league deltas: more light sources, not more brightness
+
+The per-tower spot, shaft and pool gain is `towerGain`, so `towers × towerGain ≤ 2` holds in every league (tested in `tests/world/grimdark.test.ts`).
+
+| | Scrap | Iron | Steel | Star | Void |
+|---|---|---|---|---|---|
+| towers × towerGain | 2 × 1 | 4 × 0.5 | 4 × 0.5 | 6 × 0.3 | 8 × 0.17 |
+| fires (roof barrels, floor barrels, then braziers) | 6 | 8 | 10 | 12 | 16 |
+| red lamps / sodium wall lamps | 8 / 6 | 12 / 8 | 16 / 12 | 20 / 16 | 24 / 20 |
+| banners | 6 | 8 | 10 | 12 | 12 |
+| fog | 0.022 | 0.020 | 0.018 | 0.017 | 0.016 |
+| planet | dead moon | quarter | half | large | eclipse |
+| measured mean (3 views) | 0.090 | 0.107 | 0.109 | 0.119 | 0.129 |
+
+Everything else from §12 stays: accent, ribbon, inlay, cube board, crowd size and hazards.
+
+### 15.9 Performance
+
+1280×720, high preset, Scrap League, 25 enemies alive: **about 12 ms per frame** with a forced GPU sync every frame (`readPixels`), sim included. That is at or above 60 fps. The new dressing adds 4 draw calls (glows, chains, embers, ash), one smoke Points pool, 12 banner meshes, and 7 lights in a fixed count (6 fire PointLights and 1 slit SpotLight), so a league switch never recompiles shaders because of fire.
+
+Screenshots: `docs/screenshots/13-grimdark-fight.png`, `14-grimdark-boss.png`, `15-grimdark-pitstop.png`. Look-dev helpers: `window.__rendering.measure()` for luminance, and `window.__cam` / `window.__step` as before.

@@ -27,10 +27,42 @@ export const PALETTE = {
   LAMP_IDLE: 0x5a5c5e,
 } as const;
 
+/**
+ * Grimdark revision (docs/ART_DIRECTION.md §15): black concrete, rusted steel, sodium light,
+ * fire and red warning lamps. World and rendering use these; PALETTE above stays for the
+ * gear/viewmodel/loot code that shares the STEEL tokens.
+ */
+export const GRIM = {
+  CONCRETE: 0x34302c,
+  CONCRETE_LIT: 0x48423b,
+  CONCRETE_DARK: 0x221f1c,
+  FLOOR: 0x3a3631,
+  STEEL: 0x3e3029,
+  STEEL_DARK: 0x1e1b19,
+  SHADOW: 0x0c0b0a,
+  CABLE: 0x0d0c0b,
+  RUST: 0x7a3a1a,
+  /** Low-pressure sodium, ≈ 2200 K: floodlights, lamp heads, shafts, pools. */
+  SODIUM: 0xff8a2e,
+  /** ≈ 2700 K: hub/wall lamps. */
+  SODIUM_WARM: 0xffa552,
+  /** Brazier / burn-barrel fire. */
+  FIRE: 0xff6a1c,
+  /** Red warning lamps (architecture, not THREAT: deeper, dimmer, never pulses with spawns). */
+  WARN_RED: 0xd8200e,
+  /** The cold shaft through the dome slit. */
+  SLIT: 0x9db6d6,
+  /** Fog / haze (dark warm smoke). */
+  HAZE: 0x2a1a10,
+  SMOKE: 0x3a2e25,
+  ASH: 0x8a8580,
+  CLOTH: 0x43100c,
+} as const;
+
 export type LeagueKey = 'scrap' | 'iron' | 'steel' | 'star' | 'void';
 export const LEAGUE_ORDER: readonly LeagueKey[] = ['scrap', 'iron', 'steel', 'star', 'void'];
 
-export type PlanetMode = 'none' | 'quarter' | 'half' | 'large' | 'eclipse';
+export type PlanetMode = 'none' | 'dead' | 'quarter' | 'half' | 'large' | 'eclipse';
 
 export interface LeagueStyle {
   id: LeagueKey;
@@ -63,33 +95,43 @@ export interface LeagueStyle {
   cubeBoard: boolean;
   /** One tower flickers (Scrap). */
   flicker: boolean;
+  /** Fire sites lit (4 floor burn barrels first, then braziers on the wall coping). */
+  fires: number;
+  /** Tattered sponsor banners on the pillars. */
+  banners: number;
+  /** Red warning lamps on the pillars (out of 24). */
+  redLamps: number;
+  /** Twin sodium wall lamps on the pillars (out of 24). */
+  wallLamps: number;
+  /** Per-tower spot/shaft/pool gain: more towers, dimmer each (light sources, not brightness). */
+  towerGain: number;
 }
 
 export const LEAGUE_STYLE: Record<LeagueKey, LeagueStyle> = {
   scrap: {
-    id: 'scrap', name: 'SCRAP LEAGUE', accent: 0xff5f1f, towers: 2, spots: 2, floodColor: PALETTE.FLOODLIGHT,
-    fogDensity: 0.016, shaftIntensity: 0.16, crowd: 1500, crowdFill: 0.25, crowdFlashMult: 1, planet: 'none',
-    concrete: PALETTE.CONCRETE, floorSheen: 0, ribbon: false, plinthInlay: false, floorRing: false, cubeBoard: false, flicker: true,
+    id: 'scrap', name: 'SCRAP LEAGUE', accent: 0xff5f1f, towers: 2, spots: 2, floodColor: GRIM.SODIUM,
+    fogDensity: 0.022, shaftIntensity: 0.16, crowd: 1500, crowdFill: 0.25, crowdFlashMult: 1, planet: 'dead',
+    concrete: GRIM.CONCRETE, floorSheen: 0, ribbon: false, plinthInlay: false, floorRing: false, cubeBoard: false, flicker: true, fires: 6, banners: 6, redLamps: 8, wallLamps: 6, towerGain: 1,
   },
   iron: {
-    id: 'iron', name: 'IRON LEAGUE', accent: 0xffc61a, towers: 4, spots: 4, floodColor: PALETTE.FLOODLIGHT,
-    fogDensity: 0.013, shaftIntensity: 0.13, crowd: 3000, crowdFill: 0.45, crowdFlashMult: 1, planet: 'quarter',
-    concrete: PALETTE.CONCRETE, floorSheen: 0, ribbon: true, plinthInlay: false, floorRing: false, cubeBoard: false, flicker: false,
+    id: 'iron', name: 'IRON LEAGUE', accent: 0xffc61a, towers: 4, spots: 4, floodColor: GRIM.SODIUM,
+    fogDensity: 0.02, shaftIntensity: 0.13, crowd: 3000, crowdFill: 0.45, crowdFlashMult: 1, planet: 'quarter',
+    concrete: GRIM.CONCRETE, floorSheen: 0, ribbon: true, plinthInlay: false, floorRing: false, cubeBoard: false, flicker: false, fires: 8, banners: 8, redLamps: 12, wallLamps: 8, towerGain: 0.5,
   },
   steel: {
-    id: 'steel', name: 'STEEL LEAGUE', accent: 0x1fd1c1, towers: 4, spots: 4, floodColor: PALETTE.FLOODLIGHT,
-    fogDensity: 0.011, shaftIntensity: 0.12, crowd: 5000, crowdFill: 0.65, crowdFlashMult: 1, planet: 'half',
-    concrete: PALETTE.CONCRETE, floorSheen: 0, ribbon: true, plinthInlay: true, floorRing: false, cubeBoard: true, flicker: false,
+    id: 'steel', name: 'STEEL LEAGUE', accent: 0x1fd1c1, towers: 4, spots: 4, floodColor: GRIM.SODIUM,
+    fogDensity: 0.018, shaftIntensity: 0.12, crowd: 5000, crowdFill: 0.65, crowdFlashMult: 1, planet: 'half',
+    concrete: GRIM.CONCRETE, floorSheen: 0, ribbon: true, plinthInlay: true, floorRing: false, cubeBoard: true, flicker: false, fires: 10, banners: 10, redLamps: 16, wallLamps: 12, towerGain: 0.5,
   },
   star: {
-    id: 'star', name: 'STAR LEAGUE', accent: 0xe8368f, towers: 6, spots: 6, floodColor: PALETTE.FLOODLIGHT,
-    fogDensity: 0.009, shaftIntensity: 0.12, crowd: 7500, crowdFill: 0.85, crowdFlashMult: 2, planet: 'large',
-    concrete: PALETTE.CONCRETE, floorSheen: 0.2, ribbon: true, plinthInlay: true, floorRing: false, cubeBoard: true, flicker: false,
+    id: 'star', name: 'STAR LEAGUE', accent: 0xe8368f, towers: 6, spots: 6, floodColor: GRIM.SODIUM,
+    fogDensity: 0.017, shaftIntensity: 0.12, crowd: 7500, crowdFill: 0.85, crowdFlashMult: 2, planet: 'large',
+    concrete: GRIM.CONCRETE, floorSheen: 0.2, ribbon: true, plinthInlay: true, floorRing: false, cubeBoard: true, flicker: false, fires: 12, banners: 12, redLamps: 20, wallLamps: 16, towerGain: 0.3,
   },
   void: {
-    id: 'void', name: 'VOID LEAGUE', accent: 0x8c6cff, towers: 8, spots: 8, floodColor: PALETTE.FLOODLIGHT_VOID,
-    fogDensity: 0.006, shaftIntensity: 0.10, crowd: 10000, crowdFill: 1, crowdFlashMult: 2, planet: 'eclipse',
-    concrete: 0x2e2f33, floorSheen: 0.2, ribbon: true, plinthInlay: true, floorRing: true, cubeBoard: true, flicker: false,
+    id: 'void', name: 'VOID LEAGUE', accent: 0x8c6cff, towers: 8, spots: 8, floodColor: 0xc9c2ff,
+    fogDensity: 0.016, shaftIntensity: 0.10, crowd: 10000, crowdFill: 1, crowdFlashMult: 2, planet: 'eclipse',
+    concrete: 0x1d1e22, floorSheen: 0.2, ribbon: true, plinthInlay: true, floorRing: true, cubeBoard: true, flicker: false, fires: 16, banners: 12, redLamps: 24, wallLamps: 20, towerGain: 0.17,
   },
 };
 
@@ -111,11 +153,13 @@ export interface QualitySettings {
   shaftMotes: number;
   /** Bloom resolution scale (UnrealBloom mips are the main post cost). */
   bloomScale: number;
+  /** Real PointLights for fire sites (the rest keep glow + floor pool). */
+  fireLights: number;
 }
 
 export const QUALITY_PRESETS: Record<Quality, QualitySettings> = {
-  high: { maxSpots: 8, shadowMapSize: 2048, shaftMotes: 30, bloomScale: 1 },
-  low: { maxSpots: 4, shadowMapSize: 1024, shaftMotes: 12, bloomScale: 0.5 },
+  high: { maxSpots: 8, shadowMapSize: 2048, shaftMotes: 30, bloomScale: 1, fireLights: 6 },
+  low: { maxSpots: 4, shadowMapSize: 1024, shaftMotes: 12, bloomScale: 0.5, fireLights: 3 },
 };
 
 function readQuality(): Quality {
@@ -161,27 +205,34 @@ function applySpotCap(): void {
 applySpotCap();
 
 // ---------------------------------------------------------------------------
-// Light rig (§5), in three.js physical units (r155+): a lit albedo-a surface under a light of
-// intensity I reflects a · I / π, so these numbers are the spec's intent (shadow faces read as
-// mid-dark grey, not black), not its legacy-unit values.
-//   key-lit CONCRETE ≈ 0.25 lum, back-faces ≈ 0.08 (3:1), cast-shadowed floor ≈ 0.03 (before
-//   grade) — shadow faces stay readable mid-dark grey, the stands stay darker than the pit.
+// Light rig, grimdark revision (§15), in three.js physical units (r155+): a lit albedo-a surface
+// under irradiance E reflects a · E / π.
+//   The key is no longer the floodlight banks: it is the faint cold light falling through the
+//   dome slit (shadows, a readable floor). Sodium spots, fire and red lamps make the pools; the
+//   hemisphere is a cold sky over a warm (fire) bounce, the ambient a trace of lit smoke.
+//   Key-lit black concrete ≈ 0.012 lum, shadowed ≈ 0.004, inside a sodium pool ≈ 0.12–0.25.
 // ---------------------------------------------------------------------------
 export const LIGHT = {
-  key: 4.2,
-  hemiSky: 0x3a3e45,
-  hemiGround: 0x6f6d68,
-  /** Hemisphere intensity: E(vertical face) = I · lum(mix(sky, ground)) / π ≈ 0.24. */
-  hemi: 7.5,
-  /** Flat ambient in the HAZE colour (scattered floodlight in the haze): E ≈ 0.045. */
-  ambientColor: 0x3a3d42,
-  ambient: 3.0,
-  exposure: 1.0,
+  key: 1.4,
+  keyColor: GRIM.SLIT,
+  hemiSky: 0x2a3446,
+  hemiGround: 0x5a3018,
+  /** Hemisphere intensity (cool from above, warm brazier bounce from below). */
+  hemi: 4,
+  ambientColor: 0x3a2a20,
+  ambient: 0.6,
+  exposure: 1.25,
   /** Shared gain on the floodlight shafts (see shafts.ts). */
-  shaftGain: 3.6,
-  /** Ground haze quad alpha / stand haze band total alpha (§5.1: 0.08 / 0.18). */
-  groundHaze: 0.08,
-  standHaze: 0.18,
+  shaftGain: 3.2,
+  /** Ground haze quad alpha / stand haze band total alpha. */
+  groundHaze: 0.12,
+  standHaze: 0.5,
+  /** Rim on characters (uRimColor): a cool edge so enemies separate from warm smoke. */
+  rimColor: 0x93a8c4,
+  /** Grade (pipeline.ts GradeShader). */
+  toe: 0.014,
+  vignette: 0.6,
+  grain: 0.05,
 } as const;
 
 export function leagueStyle(id: string | undefined | null): LeagueStyle {

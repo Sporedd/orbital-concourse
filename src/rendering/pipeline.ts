@@ -20,7 +20,7 @@ import { createPresence } from './presence';
 import { surfaceUniforms } from './materials';
 import { createSky } from './sky';
 import { shaftShared } from './shafts';
-import { LEAGUE_STYLE, LIGHT, PALETTE, STYLE, type LeagueStyle } from './style';
+import { GRIM, LEAGUE_STYLE, LIGHT, STYLE, type LeagueStyle } from './style';
 
 export interface RenderPipeline {
   render(): void;
@@ -29,19 +29,21 @@ export interface RenderPipeline {
 }
 
 /** Fallback fog (the world sets the league density). */
-export const FOG_COLOR = PALETTE.HAZE;
+export const FOG_COLOR = GRIM.HAZE;
 export const FOG_DENSITY = LEAGUE_STYLE.scrap.fogDensity;
 
-const GradeShader = {
+export const GradeShader = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
-    uVignette: { value: 0.35 },
-    uShadowTint: { value: new THREE.Vector3(0.97, 0.99, 1.03) },
-    uHighTint: { value: new THREE.Vector3(1.03, 1.0, 0.95) },
+    uVignette: { value: LIGHT.vignette },
+    uShadowTint: { value: new THREE.Vector3(1.0, 0.98, 0.97) },
+    uHighTint: { value: new THREE.Vector3(1.06, 0.99, 0.88) },
     uExposure: { value: LIGHT.exposure },
     uTime: { value: 0 },
-    uGrain: { value: 0.035 },
+    uGrain: { value: LIGHT.grain },
     uCA: { value: 0 },
+    uToe: { value: LIGHT.toe },
+    uSat: { value: new THREE.Vector2(0.62, 1.15) },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -56,6 +58,8 @@ const GradeShader = {
     uniform float uTime;
     uniform float uGrain;
     uniform float uCA;
+    uniform float uToe;
+    uniform vec2 uSat;
     varying vec2 vUv;
     vec3 toSRGB( vec3 c ) {
       c = max( c, vec3( 0.0 ) );
@@ -72,7 +76,11 @@ const GradeShader = {
     vec3 shoulder( vec3 c, float lumIn ) {
       float m = max( max( c.r, c.g ), max( c.b, 1e-5 ) );
       vec3 o = c * ( shoulder1( m ) / m );
-      float w = smoothstep( 2.2, 9.0, lumIn ) * 0.8;
+      // grimdark: exposure 1.25 lifts threat (lum 3) into the old 2.2 threshold; start whitening
+      // at 3.5, and never whiten pure saturated hues (a visor at point blank stacks bloom on top
+      // of its own lum and would go pink): only flashes (lum 6+) and loot cores go white-hot
+      float chroma = 1.0 - min( min( c.r, c.g ), c.b ) / m;
+      float w = smoothstep( 3.5, 12.0, lumIn ) * 0.8 * ( 1.0 - smoothstep( 0.75, 0.97, chroma ) );
       return mix( o, vec3( max( max( o.r, o.g ), o.b ) ), w );
     }
     float ign( vec2 p ) { return fract( 52.9829189 * fract( dot( p, vec2( 0.06711056, 0.00583715 ) ) ) ); }
@@ -88,17 +96,21 @@ const GradeShader = {
       c *= uExposure;
       const vec3 W = vec3( 0.2126, 0.7152, 0.0722 );
       float lum = dot( c, W );
-      c *= mix( uShadowTint, uHighTint, smoothstep( 0.04, 0.65, lum ) );
-      // chroma-protected saturation: dim world desaturated, bright emissives keep/gain chroma
+      c *= mix( uShadowTint, uHighTint, smoothstep( 0.02, 0.4, lum ) );
+      // chroma-protected saturation: the dim world is desaturated, light pools and emissives
+      // keep their warmth, threat/loot gain chroma
       float l2 = dot( c, W );
-      float sat = mix( 0.80, 1.15, smoothstep( 0.6, 1.4, l2 ) );
+      float sat = mix( uSat.x, uSat.y, smoothstep( 0.08, 1.2, l2 ) );
       c = max( mix( vec3( l2 ), c, sat ), 0.0 );
+      // soft toe: crushes the blacks (c^2 / (c + toe)) without clipping them
+      float lt = max( dot( c, W ), 1e-6 );
+      c *= lt / ( lt + uToe );
       // contrast around 0.18 (linear)
-      c = 0.18 * pow( c / 0.18, vec3( 1.12 ) );
-      c += vec3( 0.006, 0.006, 0.007 );
+      c = 0.18 * pow( c / 0.18, vec3( 1.1 ) );
+      c += vec3( 0.0012, 0.001, 0.0009 );
       c = shoulder( c, l2 );
       vec2 q = vUv - 0.5;
-      float vig = smoothstep( 0.25, 0.85, length( q * vec2( 1.0, 0.85 ) ) * 1.25 );
+      float vig = smoothstep( 0.18, 0.8, length( q * vec2( 1.0, 0.85 ) ) * 1.25 );
       c *= 1.0 - uVignette * vig;
       vec3 s = toSRGB( c );
       // film grain: luminance-only, animated, weighted to midtones
@@ -150,13 +162,13 @@ export function setupRenderingImpl(ctx: GameContext): RenderPipeline {
 
   // ---- fog + background fallback ------------------------------------------
   if (!(scene.fog instanceof THREE.FogExp2)) scene.fog = new THREE.FogExp2(FOG_COLOR, FOG_DENSITY);
-  scene.background = new THREE.Color(0x07080a);
+  scene.background = new THREE.Color(0x030304);
 
   // camera children (viewmodel) only render when the camera is in the scene graph
   if (!camera.parent) scene.add(camera);
 
   // ---- lights --------------------------------------------------------------
-  const keyColor = new THREE.Color(PALETTE.FLOODLIGHT);
+  const keyColor = new THREE.Color(LIGHT.keyColor);
   const keyIntensity = LIGHT.key;
   const key = new THREE.DirectionalLight(keyColor, keyIntensity);
   key.name = 'keyLight';
@@ -205,11 +217,11 @@ export function setupRenderingImpl(ctx: GameContext): RenderPipeline {
   const applyLeague = (ls: LeagueStyle) => {
     shownLeague = ls;
     sky.setPlanet(ls.planet);
-    keyColor.set(ls.floodColor);
+    // the key is the cold slit light in every league; the league colour lives in the spots
     key.color.copy(keyColor);
-    surfaceUniforms.uRimColor.value.set(ls.floodColor);
+    surfaceUniforms.uRimColor.value.set(LIGHT.rimColor);
     syncKeyRef();
-    surfaceUniforms.uGroundHaze.value.w = ls.id === 'scrap' ? 0.28 : ls.id === 'void' ? 0.12 : ls.id === 'iron' ? 0.24 : 0.2;
+    surfaceUniforms.uGroundHaze.value.w = ls.id === 'scrap' ? 0.4 : ls.id === 'void' ? 0.26 : 0.34;
     // spec strength (§5.1); the band is depth-stacked (haze.ts) so it no longer flattens the stands
     haze.setStrength(LIGHT.groundHaze * (ls.id === 'void' ? 0.7 : 1), LIGHT.standHaze * (ls.id === 'void' ? 0.7 : 1));
   };
@@ -284,7 +296,40 @@ export function setupRenderingImpl(ctx: GameContext): RenderPipeline {
       key, hemi, ambient, haze, bloom, grade, sky, composer, shaftShared, surfaceUniforms, syncKeyRef,
       render: () => composer.render(0),
       update: (dt: number) => pipeline.update(dt),
+      /** Look-dev: render now and measure the frame (sRGB luma mean + percentiles, linear mean). */
+      measure: () => measureFrame(() => composer.render(0), renderer.domElement),
     };
   }
   return pipeline;
+}
+
+/**
+ * Screen luminance of the frame just rendered (grimdark targets, docs/ART_DIRECTION.md §15):
+ * downsamples the canvas to 320×180 and returns the mean sRGB luma (0..1), its 20/40/50/90/99th
+ * percentiles and the mean linear luminance. Must run in the same task as the render (no
+ * preserveDrawingBuffer).
+ */
+export function measureFrame(render: () => void, src: HTMLCanvasElement): Record<string, number> {
+  render();
+  const W = 320, H = 180;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const x = c.getContext('2d');
+  if (!x) return {};
+  x.drawImage(src, 0, 0, W, H);
+  const d = x.getImageData(0, 0, W, H).data;
+  const ys = new Float32Array(W * H);
+  let sum = 0, lin = 0;
+  const L = (v: number) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  for (let i = 0; i < W * H; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+    const y = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    ys[i] = y;
+    sum += y;
+    lin += 0.2126 * L(r) + 0.7152 * L(g) + 0.0722 * L(b);
+  }
+  ys.sort();
+  const q = (p: number) => +ys[Math.floor(p * (ys.length - 1))].toFixed(3);
+  return { mean: +(sum / ys.length).toFixed(4), meanLin: +(lin / ys.length).toFixed(4), p20: q(0.2), p40: q(0.4), p50: q(0.5), p90: q(0.9), p99: q(0.99) };
 }

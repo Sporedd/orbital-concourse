@@ -12,10 +12,14 @@ import * as THREE from 'three';
 import { ARENA } from '@/core/config';
 import { createRng } from '@/core/rng';
 import type { GameContext, WorldQuery } from '@/core/types';
-import { DEFAULT_LEAGUE, LEAGUE_STYLE, PALETTE, leagueStyle, type LeagueKey, type LeagueStyle } from '@/rendering/style';
+import { DEFAULT_LEAGUE, GRIM, LEAGUE_STYLE, leagueStyle, type LeagueKey, type LeagueStyle } from '@/rendering/style';
+import { createBanners } from './banners';
 import { createBoards } from './boards';
+import { createChains } from './chains';
 import { Collision } from './collision';
 import { CROWD_MAX, createCrowd } from './crowd';
+import { BARREL_H, BARREL_SITES, createFire } from './fire';
+import { createGlows } from './glows';
 import { createHazards, type Hazards } from './hazards';
 import { ArenaBuilder, GATES } from './props';
 import { createSponsors } from './sponsors';
@@ -61,6 +65,8 @@ export function createWorld(ctx: GameContext): ArenaWorld {
   b.roof();
   b.plinth();
   b.floorAccentRing();
+  b.cables();
+  for (const [x, z, y0] of BARREL_SITES) b.burnBarrel(x, z, BARREL_H, y0);
 
   // ---- cover ---------------------------------------------------------------------------
   b.container(-15, -9, true);
@@ -99,8 +105,15 @@ export function createWorld(ctx: GameContext): ArenaWorld {
   const floorRingMesh = meshes.find((m) => m.name === 'world-floorRing');
 
   // ---- live parts ----------------------------------------------------------------------
-  const stage = createStage(ctx.scene, GATES, presRng);
+  const glows = createGlows(256, presRng);
+  root.add(glows.mesh);
+  const stage = createStage(ctx.scene, GATES, presRng, glows);
   root.add(stage.group);
+  const fire = createFire(glows, presRng);
+  root.add(fire.group);
+  root.add(createChains(presRng));
+  const banners = createBanners();
+  root.add(banners.group);
   const crowd = createCrowd(presRng);
   root.add(crowd.mesh);
   const boards = createBoards(GATES);
@@ -132,7 +145,7 @@ export function createWorld(ctx: GameContext): ArenaWorld {
   let rankTier = 1;
   /** Set once setLeague() is called explicitly: stop following ctx.standing. */
   let manualLeague = false;
-  const fog = new THREE.FogExp2(PALETTE.HAZE, ls.fogDensity);
+  const fog = new THREE.FogExp2(GRIM.HAZE, ls.fogDensity);
   ctx.scene.fog = fog;
   const crowdCount = () => Math.min(CROWD_MAX, Math.round(ls.crowd * (1 + 0.1 * (rankTier - 1))));
   const applyLeague = (next: LeagueStyle) => {
@@ -145,6 +158,8 @@ export function createWorld(ctx: GameContext): ArenaWorld {
     boards.setLeague(ls);
     sponsors.setLeague(ls);
     hazards.setLeague(ls);
+    fire.setLeague(ls);
+    banners.setLeague(ls);
     if (ribbonMesh) ribbonMesh.visible = ls.ribbon;
     if (inlayMesh) inlayMesh.visible = ls.plinthInlay;
     if (floorRingMesh) floorRingMesh.visible = ls.floorRing;
@@ -294,6 +309,9 @@ export function createWorld(ctx: GameContext): ArenaWorld {
       crowd.setHype(hype);
       crowd.update(dt);
       stage.update(dt);
+      fire.update(dt);
+      banners.update(dt);
+      glows.update(dt);
       sponsors.update(dt);
       hazards.update(dt);
       const rs = ctx.rounds?.state;

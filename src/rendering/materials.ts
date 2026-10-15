@@ -28,6 +28,12 @@ export interface SurfaceOptions extends ToonOptions {
   rim?: number;
   /** Floor slab seams (0/1). */
   seams?: number;
+  /** Rust streaks running down from edges (0..1, grimdark §15). */
+  rust?: number;
+  /** Oil stains / wet patches on the floor plane (0..1). */
+  oil?: number;
+  /** Grated floor sections (0/1, floor only): steel grates over dark pits in some 4 m slabs. */
+  grate?: number;
   /** Face normals (architecture). Default: true for concrete/steel/paint, false otherwise. */
   flat?: boolean;
 }
@@ -51,7 +57,15 @@ export const surfaceUniforms = {
    * quads cannot do softly: distant feet, floor and plinth sink into dust without the hard
    * line a flat transparent quad draws across every leg it intersects.
    */
-  uGroundHaze: { value: new THREE.Vector4(0.4, 0.41, 0.42, 0.24) },
+  uGroundHaze: { value: new THREE.Vector4(0.016, 0.012, 0.009, 0.34) },
+  /**
+   * Readability fill on characters (surfaces with a rim: enemies, bosses, viewmodel), linear
+   * multiplier on albedo. Grimdark: the arena is mostly black, so characters carry a faint
+   * fill of their own; plates read as dark forms, never as holes.
+   */
+  uCharFill: { value: new THREE.Color(0.42, 0.38, 0.35) },
+  /** Rust tint (linear rgb) for the rust streaks. */
+  uRust: { value: new THREE.Color(0x7a3a1a) },
 };
 
 /** @deprecated kept so old imports compile; hatching is gone. */
@@ -107,6 +121,8 @@ uniform vec4 uSurf2;
 uniform float uKeyRef;
 uniform vec3 uRimColor;
 uniform vec4 uGroundHaze;
+uniform vec3 uRust;
+uniform vec3 uCharFill;
 float sbHash( vec3 p ) {
   p = fract( p * 0.1031 );
   p += dot( p, p.zyx + 31.32 );
@@ -136,6 +152,37 @@ const FRAG_ALBEDO = /* glsl */ `
     vec2 j = abs( vSbWorld.xz );
     vec2 jl = 1.0 - smoothstep( vec2( 0.05 ), vec2( 0.05 ) + fw * 1.2, j );
     diffuseColor.rgb *= ( 1.0 - 0.2 * seam ) * ( 1.0 - 0.45 * max( jl.x, jl.y ) );
+    if ( uSurf2.w > 0.5 ) {
+      // grated sections: some 4 m slabs (and the drain ring at the wall foot) are steel grates
+      // over a black pit. Bars 9 cm apart; fades to the average value where the grid would alias.
+      vec2 cell = floor( vSbWorld.xz / 4.0 + 0.5 );
+      float rr = length( vSbWorld.xz );
+      float pick = step( sbHash( vec3( cell, 3.7 ) ), 0.2 ) * step( 7.5, rr );
+      float drain = step( 29.0, rr ) * ( 1.0 - step( 30.6, rr ) );
+      float gr = max( pick, drain );
+      if ( gr > 0.5 ) {
+        vec2 gp = abs( fract( vSbWorld.xz / 0.09 ) - 0.5 );
+        vec2 gw = max( fwidth( vSbWorld.xz / 0.09 ), vec2( 1e-4 ) );
+        vec2 bar = smoothstep( vec2( 0.32 ) - gw, vec2( 0.32 ) + gw, gp );
+        float b = max( bar.x, bar.y );
+        float far = smoothstep( 0.25, 0.6, max( gw.x, gw.y ) );
+        float v = mix( mix( 0.12, 1.15, b ), 0.55, far );
+        diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.045, 0.036, 0.03 ) * v * 2.2, 0.92 );
+      }
+    }
+  }
+  if ( uSurf2.y > 0.0 && vSbWorld.y > 0.03 ) {
+    // rust streaks: vertical noise (stretched in y), heavier low down and under ledges
+    float st = sbNoise( vec3( vSbWorld.x * 2.6, vSbWorld.y * 0.18, vSbWorld.z * 2.6 ) );
+    float bl = sbNoise( vSbWorld * 0.35 + 3.1 );
+    float rs = smoothstep( 0.52, 0.85, st * 0.7 + bl * 0.45 ) * uSurf2.y;
+    diffuseColor.rgb = mix( diffuseColor.rgb, uRust * ( 0.6 + 0.4 * st ), rs * 0.75 );
+  }
+  if ( uSurf2.z > 0.0 && vSbWorld.y < 0.03 ) {
+    // oil stains and wet patches: dark low-frequency blotches with a soft rim
+    float o = sbNoise( vec3( vSbWorld.xz * 0.22, 1.7 ) ) * 0.65 + sbNoise( vec3( vSbWorld.xz * 0.9, 5.3 ) ) * 0.35;
+    float stain = smoothstep( 0.56, 0.66, o );
+    diffuseColor.rgb *= 1.0 - stain * 0.6 * uSurf2.z;
   }
 }
 `;
@@ -153,6 +200,7 @@ const FRAG_OUT = /* glsl */ `
   if ( uSurf.w > 0.0 ) {
     float sbF = 1.0 - clamp( dot( normal, geometryViewDir ), 0.0, 1.0 );
     outgoingLight += uRimColor * uSurf.w * smoothstep( 0.62, 0.92, sbF );
+    outgoingLight += diffuseColor.rgb * uCharFill * ( 0.6 + 0.4 * clamp( normal.y * 0.5 + 0.5, 0.0, 1.0 ) );
   }
   {
     float hzD = length( vSbWorld - cameraPosition );
@@ -163,7 +211,7 @@ const FRAG_OUT = /* glsl */ `
 #include <opaque_fragment>
 `;
 
-const CACHE_KEY = 'concourse-c-surface-v1';
+const CACHE_KEY = 'concourse-c-surface-v2-grim';
 const cacheKey = () => CACHE_KEY;
 
 export interface SurfacedMaterial extends THREE.MeshToonMaterial {
@@ -183,7 +231,7 @@ export function makeSurface(opts: SurfaceOptions): THREE.MeshToonMaterial {
   // MeshToonMaterial has no typed flatShading, but WebGLPrograms honours the property (FLAT_SHADED)
   (m as unknown as { flatShading: boolean }).flatShading = flat;
   const uSurf = { value: new THREE.Vector4(opts.mottle ?? d[0], opts.grime ?? d[1], opts.sheen ?? d[2], opts.rim ?? d[3]) };
-  const uSurf2 = { value: new THREE.Vector4(opts.seams ?? 0, 0, 0, 0) };
+  const uSurf2 = { value: new THREE.Vector4(opts.seams ?? 0, opts.rust ?? 0, opts.oil ?? 0, opts.grate ?? 0) };
   m.userData.uSurf = uSurf;
   m.userData.uSurf2 = uSurf2;
   m.userData.surface = kind;
@@ -193,6 +241,8 @@ export function makeSurface(opts: SurfaceOptions): THREE.MeshToonMaterial {
     shader.uniforms.uKeyRef = surfaceUniforms.uKeyRef;
     shader.uniforms.uRimColor = surfaceUniforms.uRimColor;
     shader.uniforms.uGroundHaze = surfaceUniforms.uGroundHaze;
+    shader.uniforms.uRust = surfaceUniforms.uRust;
+    shader.uniforms.uCharFill = surfaceUniforms.uCharFill;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${VERT_PARS}`)
       .replace('#include <worldpos_vertex>', VERT_MAIN);

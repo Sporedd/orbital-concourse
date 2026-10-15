@@ -9,8 +9,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { makeGlow, makeSurface } from '@/rendering/materials';
 import { createShaft, type Shaft } from '@/rendering/shafts';
-import { LUM, PALETTE, glowLum, type LeagueStyle } from '@/rendering/style';
+import { GRIM, LUM, PALETTE, glowLum, type LeagueStyle } from '@/rendering/style';
 import { trs } from './batcher';
+import { Flicker, GlowKind, type Glows } from './glows';
 import { createFloorPool, type FloorPool } from './pools';
 import { DIM, ROW_RISE, TIERS, type GateDef } from './props';
 import { createPuffs, type Puffs } from './puffs';
@@ -19,13 +20,22 @@ import { createFloorStrobe } from './strobe';
 /** Tower order: the first N are used by a league with N towers. */
 export const TOWER_ANGLES = [225, 315, 135, 45, 180, 0, 270, 90];
 
-const SPOT_INTENSITY = 2600;
-const SPOT_ANGLE = 0.38;
-const SHAFT_RADIUS = 7;
-/** Additive floor-pool luminance at the centre (on top of the key-lit floor). */
-const POOL_I = 0.18;
+/**
+ * Grimdark (§15): few sodium spots that cut hard pools out of the dark. The intensity is per
+ * tower and scaled by LeagueStyle.towerGain, so a league with more towers gets more pools, not
+ * a brighter arena. Narrow cone, short penumbra.
+ */
+const SPOT_INTENSITY = 36000;
+const SPOT_ANGLE = 0.13;
+const SPOT_PENUMBRA = 0.45;
+const SHAFT_RADIUS = 5.2;
+/** Additive floor-pool luminance at the centre (on top of the spot-lit floor). */
+const POOL_I = 0.14;
 /** Pool radius across the beam: the bright core of the cone, tighter than the haze shaft. */
-const POOL_RADIUS = 4.4;
+const POOL_RADIUS = 3.8;
+/** The cold slit light on the boss plinth (one spot, one shaft, one pool, every league). */
+const SLIT_INTENSITY = 9000;
+const SLIT_LAMP = new THREE.Vector3(5.5, 40, -9);
 
 interface Tower {
   angle: number;
@@ -65,6 +75,10 @@ interface Gate {
   chase: THREE.MeshBasicMaterial[];
   /** Red backlight inside the airlock (hidden by the closed doors). */
   back: { value: number };
+  /** Glow index of the red smoke halo (-1 without glows). */
+  halo: number;
+  /** Seconds to the next steam vent from the door seals. */
+  steamT: number;
 }
 
 export interface Stage {
@@ -135,12 +149,12 @@ function buildTowerGeometry(): { lattice: THREE.BufferGeometry; discs: THREE.Buf
   return { lattice, discs, lampLocal };
 }
 
-export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => number): Stage {
+export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => number, glows?: Glows): Stage {
   const group = new THREE.Group();
   group.name = 'world-stage';
-  const latticeMat = makeSurface({ color: PALETTE.STEEL_DARK, surface: 'steel', grime: 0 });
-  const doorMat = makeSurface({ color: PALETTE.STEEL, surface: 'steel', sheen: 0.12 });
-  const doorTrim = makeSurface({ color: PALETTE.STEEL_DARK, surface: 'steel' });
+  const latticeMat = makeSurface({ color: GRIM.STEEL_DARK, surface: 'steel', grime: 0, rust: 0.5 });
+  const doorMat = makeSurface({ color: GRIM.STEEL, surface: 'steel', sheen: 0.12, rust: 0.8, mottle: 0.1 });
+  const doorTrim = makeSurface({ color: GRIM.STEEL_DARK, surface: 'steel', rust: 0.4 });
   const tg = buildTowerGeometry();
 
   // ---- towers ---------------------------------------------------------------------------
@@ -173,6 +187,17 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
     };
   });
 
+  // ---- the cold slit: one shaft from the dome slit onto the boss plinth ------------------------
+  const slitTarget = new THREE.Vector3(0, 0.6, 0);
+  const slitShaft = createShaft(SLIT_LAMP, slitTarget, 4.2, GRIM.SLIT, 0.13, rand);
+  const slitPool = createFloorPool(SLIT_LAMP, new THREE.Vector3(0, 0, 0), 3.4, GRIM.SLIT, 0.07);
+  slitPool.mesh.position.y = 0.612; // on the plinth top
+  const slitSpot = new THREE.SpotLight(GRIM.SLIT, SLIT_INTENSITY, 80, 0.13, 0.5, 2);
+  slitSpot.castShadow = false;
+  slitSpot.position.copy(SLIT_LAMP);
+  slitSpot.target.position.copy(slitTarget);
+  group.add(slitShaft.group, slitPool.mesh, slitSpot, slitSpot.target);
+
   // ---- gates (doors, lamps) ----------------------------------------------------------------
   const gateLights: THREE.PointLight[] = [];
   for (let i = 0; i < 4; i++) {
@@ -182,7 +207,8 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
     gateLights.push(l);
   }
   const lightOwner: (Gate | null)[] = [null, null, null, null];
-  const idleLamp = new THREE.Color(PALETTE.LAMP_IDLE).multiplyScalar(0.6);
+  // grimdark: idle gate lamps burn a dim warning red (below bloom); THREAT strobes on a spawn
+  const idleLamp = new THREE.Color(GRIM.WARN_RED).multiplyScalar(glowLum(GRIM.WARN_RED, 0.5, 20));
   const threatLamp = new THREE.Color(PALETTE.THREAT).multiplyScalar(glowLum(PALETTE.THREAT, 2.0, 12));
   const doorGeo = new THREE.BoxGeometry(1, 1, 1);
   const gateObjs: Gate[] = gates.map((def) => {
@@ -242,6 +268,16 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
     lamp.rotation.y = F.rotation.y;
     lamp.scale.set(boss ? 1.2 : 0.7, 0.22, 0.2);
     group.add(lamp);
+    // red halo in the smoke around the status lamp; caged red lamps on the jambs
+    const halo = glows ? glows.add({ pos: lamp.position.clone().add(new THREE.Vector3(-Math.cos(a), 0, -Math.sin(a)).multiplyScalar(0.3)), width: boss ? 4.5 : 3.2, kind: GlowKind.Halo, color: GRIM.WARN_RED, intensity: 0.07, flicker: Flicker.Pulse }) : -1;
+    if (glows) {
+      for (const sx of [-1, 1]) {
+        const lat = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)).multiplyScalar(sx * (boss ? 8.4 : 3.75));
+        const p = new THREE.Vector3(Math.cos(a) * 30.0, boss ? 7.8 : 4.4, Math.sin(a) * 30.0).add(lat);
+        glows.add({ pos: p, width: 0.22, kind: GlowKind.Dot, color: GRIM.WARN_RED, intensity: glowLum(GRIM.WARN_RED, 1.3, 20), flicker: Flicker.Steady });
+        glows.add({ pos: p, width: 2.4, kind: GlowKind.Halo, color: GRIM.WARN_RED, intensity: 0.06, flicker: Flicker.Pulse });
+      }
+    }
     // boss: chase lamps along the lintel
     const chase: THREE.MeshBasicMaterial[] = [];
     if (boss) {
@@ -263,6 +299,7 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
       def, doors, doorShift: boss ? 5.9 : 2.9, open: 0, openTime: 0.6, jolt: 99, alertT: 0, holdOpen: 0, lampMat,
       mouth: new THREE.Vector3(Math.cos(a) * 31.2, 0, Math.sin(a) * 31.2), inward,
       lampPos: lamp.position.clone().add(new THREE.Vector3(-Math.cos(a), -0.6, -Math.sin(a)).multiplyScalar(1.2)), chase, back,
+      halo, steamT: 2 + rand() * 6,
     };
   });
   const bossGate = gateObjs.find((g) => g.def.kind === 'boss')!;
@@ -291,7 +328,7 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
       t.pool.mesh.visible = used;
       const wantSpot = used && i < ls.spots;
       if (wantSpot && !t.spot) {
-        const s = new THREE.SpotLight(ls.floodColor, SPOT_INTENSITY, 90, SPOT_ANGLE, 0.6, 2);
+        const s = new THREE.SpotLight(ls.floodColor, SPOT_INTENSITY * ls.towerGain, 90, SPOT_ANGLE, SPOT_PENUMBRA, 2);
         s.castShadow = false;
         s.position.copy(t.lampPos);
         s.target.position.copy(t.aim);
@@ -305,7 +342,7 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
       t.spot?.color.set(ls.floodColor);
       t.lampMat.color.set(ls.floodColor).multiplyScalar(glowLum(ls.floodColor, LUM.lamp));
       t.shaft.setColor(ls.floodColor);
-      t.shaft.setIntensity(ls.shaftIntensity);
+      t.shaft.setIntensity(ls.shaftIntensity * ls.towerGain);
       t.pool.setColor(ls.floodColor);
       t.pool.setFog(ls.fogDensity);
     });
@@ -339,6 +376,7 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
     gateLights[idx].position.copy(g.lampPos);
   }
 
+  const wasAlert = new Set<Gate>();
   const ease = (k: number) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
 
   return {
@@ -407,8 +445,9 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
             on = Math.sin(time * 80) > 0.3 ? 0.15 : 0.02;
           }
         }
-        if (t.spot) t.spot.intensity = SPOT_INTENSITY * on;
-        t.shaft.setIntensity((ls?.shaftIntensity ?? 0.12) * on);
+        const tg = ls?.towerGain ?? 1;
+        if (t.spot) t.spot.intensity = SPOT_INTENSITY * tg * on;
+        t.shaft.setIntensity((ls?.shaftIntensity ?? 0.12) * tg * on);
         // overlapping pools (swings onto one point, legendary spectacle) share the light
         // instead of stacking additively into a burnt-white floor
         let overlap = 0;
@@ -418,7 +457,7 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
           const d = Math.hypot(o.aim.x - t.aim.x, o.aim.z - t.aim.z);
           overlap += 1 - THREE.MathUtils.smoothstep(d, POOL_RADIUS * 0.6, POOL_RADIUS * 1.8);
         }
-        t.pool.setIntensity((POOL_I * on) / (1 + overlap));
+        t.pool.setIntensity((POOL_I * tg * on) / (1 + overlap));
         t.shaft.update(time);
         if (ls) t.lampMat.color.set(ls.floodColor).multiplyScalar(glowLum(ls.floodColor, LUM.lamp) * (0.2 + 0.8 * on));
       }
@@ -435,6 +474,7 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
         if (prev < 2.0 && bossSeq >= 2.0) gatePuff(bossGate, 24, 2.2, 3);
         if (bossSeq > 6) bossSeq = -1;
       }
+      slitShaft.update(time);
       strobe.update(dt);
       puffs.update(dt);
 
@@ -471,8 +511,20 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
           // hard strobe (8 Hz), brightest in the first second
           const on = Math.sin(time * Math.PI * 2 * 8) > 0 ? 1 : 0.12;
           g.lampMat.color.copy(threatLamp).multiplyScalar(on * (g.alertT > 0.6 ? 1 : 0.6));
+          if (glows) glows.set(g.halo, PALETTE.THREAT, 0.35 * on, Flicker.Steady);
         } else {
           g.lampMat.color.copy(idleLamp);
+          if (glows && wasAlert.has(g)) glows.set(g.halo, GRIM.WARN_RED, 0.07, Flicker.Pulse);
+        }
+        if (alert) wasAlert.add(g);
+        else wasAlert.delete(g);
+        // steam venting from the door seals now and then
+        g.steamT -= dt;
+        if (g.steamT <= 0) {
+          g.steamT = 5 + rand() * 9;
+          const lat = tmpV.set(-g.inward.z, 0, g.inward.x).multiplyScalar((rand() - 0.5) * (g.def.kind === 'boss' ? 10 : 5));
+          puffAt.copy(g.mouth).add(lat).setY(0.4 + rand() * 3.5);
+          puffs.emit(puffAt, g.inward, 5, { spread: 0.3, speed: 1.6, life: 2.2, size: 0.7, up: 0.6 });
         }
         if (g.chase.length) {
           for (let k = 0; k < g.chase.length; k++) {
@@ -492,7 +544,6 @@ export function createStage(scene: THREE.Scene, gates: GateDef[], rand: () => nu
           if (o && o.alertT <= 0) lightOwner[i] = null;
         }
       }
-      void tmpV;
     },
   };
 }

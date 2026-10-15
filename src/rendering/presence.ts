@@ -99,7 +99,7 @@ export function createPresence(ctx: GameContext): Presence {
   }
 
   // one pooled core light (always present, intensity 0 when idle → constant light count)
-  const light = new THREE.PointLight(PALETTE.THREAT, 0, 7, 2);
+  const light = new THREE.PointLight(PALETTE.THREAT, 0, 9, 2);
   light.castShadow = false;
   group.add(light);
   const fwd = new THREE.Vector3();
@@ -139,17 +139,19 @@ export function createPresence(ctx: GameContext): Presence {
         s.pool.position.set(p.x, gy + 0.016, p.z);
         s.pool.scale.set(r * 6.5, 1, r * 6.5);
         const pulse = 0.8 + 0.2 * Math.sin(time * 3.1 + p.x);
-        // THREAT lum ≈ 0.23 per unit: ×1.3 → ≈ 0.3 at the centre (light on concrete, below bloom)
-        s.poolMat.uniforms.uI.value = 1.3 * pulse * s.fade;
+        // grimdark under-glow: THREAT lum ≈ 0.23 per unit: ×2.2 → ≈ 0.5 at the centre (a red
+        // pool the boss stands in, still below bloom)
+        s.poolMat.uniforms.uI.value = 3.0 * pulse * s.fade;
         if (!lightUsed && alive) {
           lightUsed = true;
-          // in front of the chest (local +Z), so it rakes the floor and the front plates
+          // grimdark under-glow: low in front of the boss (local +Z), so it lights the floor and
+          // the plates from below and the silhouette reads against the dark
           e.object.getWorldDirection(fwd);
           fwd.y = 0;
           if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, 1);
           fwd.normalize();
-          light.position.set(p.x + fwd.x * (r + 0.6), gy + Math.max(1.2, e.height * 0.45), p.z + fwd.z * (r + 0.6));
-          light.intensity = 6 * pulse * s.fade; // a rake on the floor, not a red wash over the scene
+          light.position.set(p.x + fwd.x * (r + 0.5), gy + 0.7, p.z + fwd.z * (r + 0.5));
+          light.intensity = 30 * pulse * s.fade;
         }
       }
       if (!lightUsed) light.intensity = 0;
