@@ -4,6 +4,7 @@ Repo: https://github.com/Sporedd/orbital-concourse (private), branch `main`. Eve
 
 ## State
 - Playable: `npm run dev` → http://localhost:5173 (audio starts muted; M unmutes). Co-op: `npm run relay` + F2.
+- Live build: https://sporedd.github.io/orbital-concourse/ — deployed by .github/workflows/pages.yml on every push to main (repo is public; Pages source = GitHub Actions). No hosted relay: co-op there needs `?relay=ws://...`.
 - `npm run test:all` = typecheck + 403 vitest tests + standing/gear/net smoke suites. All green.
 - Docs: PLAN.md (roadmap, §13 latest requirements), docs/ART_DIRECTION.md, docs/SKILL_TREE.md, docs/ECONOMY.md, docs/INTEGRATION_NOTES.md.
 
