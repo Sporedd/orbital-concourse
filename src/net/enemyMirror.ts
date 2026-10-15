@@ -18,8 +18,9 @@ import { ELEMENT_COLORS } from '@/core/types';
 import { LUM, PALETTE, glowLum } from '@/rendering/style';
 import {
   DISC_GEO, RING_GEO, SPHERE_GEO,
-  buildArtillery, buildBomber, buildBrute, buildGrunt, buildSpitter, buildSummoner, type Rig,
+  buildArtillery, buildBomber, buildBrute, buildGrunt, buildSpitter, buildSummoner, updateGlowLod, type Rig,
 } from '@/enemies/models';
+import { poseRun } from '@/enemies/pose';
 import { applyEnemyDelta, dec, type EnemyDeltaW, type EnemyW, type ProjW } from './protocol';
 import { SampleBuffer, makeSample } from './interp';
 
@@ -63,6 +64,7 @@ const FIRE_TINT = new THREE.Color(ELEMENT_COLORS.fire);
 const SHOCK_TINT = new THREE.Color(ELEMENT_COLORS.shock);
 const ICE_TINT = new THREE.Color(ELEMENT_COLORS.ice);
 const _w = new THREE.Vector3();
+const _camPos = new THREE.Vector3();
 
 export class MirrorEnemy implements Enemy {
   readonly id: string;
@@ -204,6 +206,7 @@ export class MirrorEnemy implements Enemy {
       this.deathPose();
     }
     this.tint();
+    updateGlowLod(rig, _camPos.setFromMatrixPosition(this.ctx.camera.matrixWorld));
   }
 
   private animate(dt: number): void {
@@ -214,10 +217,15 @@ export class MirrorEnemy implements Enemy {
     const k = Math.min(1, this.speed / 4);
     const sw = Math.sin(this.walkPhase);
     const legAmp = kind === 'artillery' ? 0.25 : kind === 'spitter' ? 0.35 : 0.6;
-    for (let i = 0; i < rig.legs.length; i++) {
-      // biped: alternate; quadruped: diagonal pairs (0/3, 1/2)
-      const sign = rig.legs.length === 4 ? (i === 0 || i === 3 ? 1 : -1) : i % 2 === 0 ? 1 : -1;
-      rig.legs[i].rotation.x = sw * legAmp * k * sign;
+    if (rig.parts.knee0) {
+      // trooper rigs (grunt, spitter, bomber, brute): the shared run cycle with knees and elbows
+      poseRun(rig, this.walkPhase, k, { stride: legAmp + 0.2 });
+    } else {
+      for (let i = 0; i < rig.legs.length; i++) {
+        // biped: alternate; quadruped: diagonal pairs (0/3, 1/2)
+        const sign = rig.legs.length === 4 ? (i === 0 || i === 3 ? 1 : -1) : i % 2 === 0 ? 1 : -1;
+        rig.legs[i].rotation.x = sw * legAmp * k * sign;
+      }
     }
     const attacking = ATTACK_ANIMS.has(s.anim);
     for (let i = 0; i < rig.arms.length; i++) {

@@ -67,10 +67,11 @@ Accent is always static, straight, architectural and lum ≤ 1.2. Loot is a vert
 
 | Token | Hex | Role |
 |---|---|---|
-| `ARMOUR` | `#4E5249` | olive-grey plate (base) |
-| `ARMOUR_LIT` | `#6E7366` | top plates, pauldrons |
-| `UNDERSUIT` | `#2D302A` | joints, under-layer |
-| `THREAT` | `#FF2238` | visor slit, chest core, weak points |
+| plate / lit / dark | `#313F2C` / `#3B4A36` / `#222A1F` | olive-gunmetal plates (chroma ≤ 11 %; the warm fill and the grade's low-light desaturation pull them to olive-grey on screen) |
+| worn edge | `#475641` / `#52624B` / `#343E31` | every 45° chamfer of a plate (the light draws the edge, no outlines) |
+| undersuit | `#0F110E` | matte black rubber at neck, elbows, hips, knees |
+| `ENEMY_GLOW` | `#FF5F1F` | visor slit, chest chevrons, status marks (the HUD accent orange, the user's pick; the one sanctioned use of accent on enemies) |
+| `THREAT` | `#FF2238` | weak points, muzzles, payloads, tank windows, boss under-glow |
 
 ---
 
@@ -246,14 +247,18 @@ Put the colours and per-league numbers in **one data file** `src/rendering/style
 
 ## 8. Enemies, bosses and gear
 
-**Palette:** ARMOUR `#4E5249`, ARMOUR_LIT `#6E7366` on top plates, UNDERSUIT `#2D302A`, emissive THREAT only on things you should shoot. `surface: 'character'` (rim 0.35). Hit flash: emissive BONE at lum 1.2 for 60 ms, not white-out.
+**Palette:** the §1.4 enemy tokens (olive-gunmetal plates with lighter worn edges, black undersuit, ENEMY_GLOW orange slits, THREAT only on things you should shoot). `surface: 'character'` (rim 0.3). Hit flash: emissive BONE at lum 1.2 for 60 ms, not white-out. Kit: `src/enemies/armourKit.ts`, run cycle: `src/enemies/pose.ts`.
 
 **Silhouettes** (read by shape first, then by the threat marks):
-- **Grunt:** broad, low, wide pauldrons, short legs, horizontal visor slit.
-- **Spitter:** tall and narrow, with a side tank (THREAT glow window in it) and a long forearm.
-- **Bomber:** squat octagonal hull, large bright core (THREAT lum 2.5, pulse speeds up as it closes).
+- **One kit:** a 7-head trooper (1.85 m): layered chamfered plates (pectoral shells over three abdomen segments, rounded two-tier pauldrons, bracers, thigh plates, knee caps, shin guards), black undersuit at the joints, an angular full-face helmet with a crest fin, swept-back skull and a narrow orange visor slit, two short orange chevrons on the chest, small orange status marks on the right forearm and left thigh. Rank and threat read from glow colour, glow strength and plate count, not from size alone.
+- **Grunt:** the line trooper, gunmetal blades along both bracers.
+- **Spitter:** taller and narrower, wrap-around visor, long bracers, a tall tank over the left shoulder with THREAT windows, a launcher over the right shoulder with a red muzzle.
+- **Bomber:** a small, stocky sapper (1.3 m), no chevrons, a THREAT payload canister strapped across the chest (blinks faster on the fuse), a fuse antenna with a red spark.
 - **Elites:** a BONE stencil plate on the chest plus a second emissive band in the affix colour (Frozen = ice, Vampiric = THREAT, Shielded = BONE, Splitting = accent).
-- **Bosses** are architecture that walks, at 2.5–4× grunt height. **Brute:** a bulkhead slab torso with hydraulic forearms and a shield slab. **Summoner:** an obelisk with 4 orbiting slabs. **Artillery:** a bunker on 4 legs with a mortar mast. Weak points are THREAT panels that slide open per phase (lum 2.5 pulsing).
+- **Brute:** the trooper at 3.7 m × 1.35, two extra plate tiers (stacked pauldrons, gorget, tassets, heavy thighs and boots), a 2.2× crest, hydraulic forearms, a shield slab on the left forearm, a THREAT reactor on the sternum, red under-glow vents at belt and heels.
+- **Summoner:** a floating commander: trooper upper body, a three-tier tasset skirt with a red-glowing hem and thruster, a crown of fins, a THREAT gem in the chest (weak point), four orbiting slabs with orange slits.
+- **Artillery:** a siege walker: stacked carapace on four armoured legs (pauldron hip shells, knee caps, shin guards), a big trooper helm at the front, orange glacis chevrons, the mortar mast with a THREAT muzzle ring, the THREAT core caged on its back.
+- **Glow LOD:** beyond 18 m every visor/chevron slit swaps to a thickened twin (≥ 4.8 cm) so it stays at least a pixel tall at 30 m (there is no MSAA); up close the slit runs at 0.7 of the far brightness so it stays a sharp line.
 - **Death:** no ragdoll. Slabs separate (2–4 pieces), a dust burst, and the emissive fades to black over 0.4 s.
 
 **Gear growth (§11 of the plan):** item level adds **slabs, ribs, fins and antenna masts** in discrete steps (ilvl 1: 1 slab; 10: + fins; 20: + masts and double plates). Never organic horns. Rarity is the only colour on gear, as emissive seams: common none; uncommon to epic as a seam at lum 1.2; legendary as a seam at lum 2.5 plus slow motes.
@@ -502,7 +507,7 @@ exposure **1.25** · soft toe `c *= l / (l + 0.014)` (crushes the blacks without
 
 ### 15.7 Enemies (`src/enemies/models.ts`, brightness only)
 
-Same models and plating. Plates ×0.8 (ARMOUR, ARMOUR_LIT, UNDERSUIT), visor lum 2.0 → **3.0**, every `threatK` tier ×1.15, cores and weak points at lum 2.8. The rim is 0.5 in the cool rim colour. Bosses get the stronger red under-glow from §15.3.
+Superseded later the same day by the trooper kit (§8). Current values: mob slits orange, lum 3.4 far / 2.4 near; boss slits lum 3.0; THREAT parts 2.8 (mobs) / 3.2 (bosses); rim 0.3 in the cool rim colour (0.5 washed the thin limbs out to grey). Bosses get the stronger red under-glow from §15.3.
 
 ### 15.8 Per-league deltas: more light sources, not more brightness
 
